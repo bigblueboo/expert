@@ -1,6 +1,11 @@
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 
-export type ReasoningEffort = "medium" | "high" | "xhigh";
+export const REASONING_EFFORTS = ["medium", "high", "xhigh", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export const REASONING_MODES = ["standard", "pro"] as const;
+export type ReasoningMode = (typeof REASONING_MODES)[number];
+
 export type OutputFormat = "text" | "json";
 
 export const RESPONSE_STATUSES = [
@@ -63,6 +68,7 @@ export interface JobRecord {
   responseId: string;
   model: string;
   reasoningEffort: ReasoningEffort;
+  reasoningMode?: ReasoningMode;
   status: JobStatus;
   createdAt: string;
   updatedAt: string;

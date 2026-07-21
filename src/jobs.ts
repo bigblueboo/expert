@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { JOB_STATUSES } from "./types.js";
+import { JOB_STATUSES, REASONING_EFFORTS, REASONING_MODES } from "./types.js";
 import type { JobRecord, JobRef, ResponseLike } from "./types.js";
 import { normalizeStatus } from "./output.js";
 
@@ -21,7 +21,8 @@ const jobRecordSchema: z.ZodType<JobRecord> = z.object({
   jobId: z.string(),
   responseId: z.string(),
   model: z.string(),
-  reasoningEffort: z.enum(["medium", "high", "xhigh"]),
+  reasoningEffort: z.enum(REASONING_EFFORTS),
+  reasoningMode: z.enum(REASONING_MODES).optional(),
   status: z.enum(JOB_STATUSES),
   createdAt: z.string(),
   updatedAt: z.string(),

@@ -1,8 +1,14 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ResponseLike } from "./types.js";
+import type { JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ReasoningMode, ResponseLike } from "./types.js";
 import { resolveContext, readStdinIfRequested, stableContextHash } from "./context.js";
-import { DEFAULT_MODEL, DEFAULT_POLL_INTERVAL, DEFAULT_REASONING_EFFORT, DEFAULT_TIMEOUT } from "./defaults.js";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_POLL_INTERVAL,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_REASONING_MODE,
+  DEFAULT_TIMEOUT
+} from "./defaults.js";
 import { JobStore, updateJobFromResponse } from "./jobs.js";
 import { terminalErrorMessage, extractOutputText, normalizeStatus } from "./output.js";
 import { pollResponse } from "./poller.js";
@@ -25,6 +31,7 @@ export interface AskOptions {
   dryRun?: boolean;
   model?: string;
   reasoning?: ReasoningEffort;
+  reasoningMode?: ReasoningMode;
   timeout?: string;
   pollInterval?: string;
   format?: OutputFormat;
@@ -51,6 +58,7 @@ interface WaitOptions {
 export async function runAsk(promptParts: string[], options: AskOptions, deps: CommandDeps): Promise<number> {
   const model = options.model ?? DEFAULT_MODEL;
   const reasoningEffort = options.reasoning ?? DEFAULT_REASONING_EFFORT;
+  const reasoningMode = options.reasoningMode ?? DEFAULT_REASONING_MODE;
   const format = options.format ?? "text";
   const prompt = promptParts.join(" ").trim();
   const stdinText = await readStdinIfRequested(Boolean(options.stdin));
@@ -71,6 +79,7 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
       const payload = {
         model,
         reasoning_effort: reasoningEffort,
+        reasoning_mode: reasoningMode,
         prompt,
         stdin_bytes: Buffer.byteLength(stdinText),
         context_hash: stableContextHash(context),
@@ -92,6 +101,7 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
   const prepared = await prepareConsultationRequest(deps.api, {
     model,
     reasoningEffort,
+    reasoningMode,
     prompt,
     stdinText,
     context,
@@ -104,6 +114,7 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     responseId: created.id,
     model,
     reasoningEffort,
+    reasoningMode,
     status: normalizeStatus(created.status),
     prompt: prepared.fullPrompt,
     manifest: context.manifest,
@@ -266,6 +277,7 @@ function responsePayload(ref: JobRef, response: ResponseLike, outputText = extra
     response_id: ref.responseId,
     model: ref.record?.model ?? "unknown",
     reasoning_effort: ref.record?.reasoningEffort ?? null,
+    reasoning_mode: ref.record?.reasoningMode ?? null,
     status: normalizeStatus(response.status),
     output_text: outputText,
     error: response.error?.message ?? null,

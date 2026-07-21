@@ -104,10 +104,10 @@ describe("ask command", () => {
     expect(code).toBe(0);
     expect(api.uploads).toHaveLength(1);
     expect(api.createdBodies[0]).toMatchObject({
-      model: "gpt-5.5-pro",
+      model: "gpt-5.6",
       background: true,
       store: true,
-      reasoning: { effort: "xhigh" }
+      reasoning: { effort: "xhigh", mode: "pro" }
     });
     expect(JSON.stringify(api.createdBodies[0])).toContain("input_file");
     expect(outputOf(deps.stdout)).toContain("Final answer");
@@ -131,7 +131,8 @@ describe("ask command", () => {
     expect(api.uploads).toHaveLength(0);
     expect(api.createdBodies).toHaveLength(0);
     expect(JSON.parse(outputOf(deps.stdout))).toMatchObject({
-      model: "gpt-5.5-pro",
+      model: "gpt-5.6",
+      reasoning_mode: "pro",
       files: [{ path: "notes.md" }]
     });
   });
@@ -144,7 +145,7 @@ describe("job commands", () => {
     const deps = depsFor(cwd, api);
     const job = await deps.jobStore.create({
       responseId: "resp_saved",
-      model: "gpt-5.5-pro",
+      model: "gpt-5.6",
       reasoningEffort: "xhigh",
       status: "queued",
       prompt: "prompt",

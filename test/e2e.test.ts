@@ -146,10 +146,10 @@ describe("CLI e2e", () => {
 
     expect(server.createBodies).toHaveLength(1);
     expect(server.createBodies[0]).toMatchObject({
-      model: "gpt-5.5-pro",
+      model: "gpt-5.6",
       background: true,
       store: true,
-      reasoning: { effort: "xhigh" }
+      reasoning: { effort: "xhigh", mode: "pro" }
     });
     expect(JSON.stringify(server.createBodies[0])).toContain("input_file");
 

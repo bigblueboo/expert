@@ -1,6 +1,6 @@
 # expert
 
-`expert` is a TypeScript CLI for asking GPT-5.5 Pro for a long-running consultation with explicit local context. It uses the OpenAI Responses API in background mode, stores a local job record, polls until completion, and supports resume/status/cancel.
+`expert` is a TypeScript CLI for asking GPT-5.6 Pro for a long-running consultation with explicit local context. It uses the OpenAI Responses API in background mode, stores a local job record, polls until completion, and supports resume/status/cancel.
 
 ## Local setup
 
@@ -56,7 +56,8 @@ expert ask "Review mixed context" --file README.md --file "src/**/*.ts" --file "
 
 By default `ask` uses:
 
-- `model: gpt-5.5-pro`
+- `model: gpt-5.6`
+- `reasoning.mode: pro` (GPT-5.6 Pro; pass `--reasoning-mode standard` for non-GPT-5.6 models)
 - `reasoning.effort: xhigh`
 - `background: true`
 - `store: true`

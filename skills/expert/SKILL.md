@@ -1,11 +1,11 @@
 ---
 name: expert
-description: Consult GPT-5.5 Pro through the local `expert` CLI for second opinions on coding tasks. Use when Codex needs a high-quality external review, architecture/debugging help, test strategy feedback, implementation plan critique, or analysis of attached code/docs using explicit local files, directories, globs, or stdin. Especially useful for hard, ambiguous, high-risk, or long-running coding questions where blocking up to 60 minutes is acceptable.
+description: Consult GPT-5.6 Pro through the local `expert` CLI for second opinions on coding tasks. Use when Codex needs a high-quality external review, architecture/debugging help, test strategy feedback, implementation plan critique, or analysis of attached code/docs using explicit local files, directories, globs, or stdin. Especially useful for hard, ambiguous, high-risk, or long-running coding questions where blocking up to 60 minutes is acceptable.
 ---
 
 # Expert
 
-Use the `expert` CLI to ask GPT-5.5 Pro for a second opinion with explicit local context. The CLI uploads named files, starts a background Responses API job, polls until completion, and stores a resumable job record.
+Use the `expert` CLI to ask GPT-5.6 Pro for a second opinion with explicit local context. The CLI uploads named files, starts a background Responses API job, polls until completion, and stores a resumable job record.
 
 ## Quick Start
 
@@ -100,4 +100,4 @@ expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout
 
 ## Defaults
 
-The CLI defaults to `gpt-5.5-pro`, `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, and a 5 second polling interval. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+The CLI defaults to `gpt-5.6` with `reasoning.mode: pro` (GPT-5.6 Pro), `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, and a 5 second polling interval. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.

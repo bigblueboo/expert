@@ -6,11 +6,13 @@ import {
   DEFAULT_MODEL_DISPLAY_NAME,
   DEFAULT_POLL_INTERVAL,
   DEFAULT_REASONING_EFFORT,
+  DEFAULT_REASONING_MODE,
   DEFAULT_TIMEOUT
 } from "./defaults.js";
 import { defaultExpertHome, JobStore } from "./jobs.js";
 import { OpenAISdkAdapter } from "./openai-adapter.js";
-import type { OutputFormat, ReasoningEffort } from "./types.js";
+import { REASONING_EFFORTS, REASONING_MODES } from "./types.js";
+import type { OutputFormat, ReasoningEffort, ReasoningMode } from "./types.js";
 
 function collect(value: string, previous: string[]): string[] {
   previous.push(value);
@@ -35,7 +37,8 @@ export function createProgram(): Command {
     .option("--stdin", "Read additional prompt/context from stdin.")
     .option("--dry-run", "Show resolved context without calling OpenAI.")
     .option("--model <model>", "Model to use.", DEFAULT_MODEL)
-    .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(["medium", "high", "xhigh"]).default(DEFAULT_REASONING_EFFORT))
+    .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(REASONING_EFFORTS).default(DEFAULT_REASONING_EFFORT))
+    .addOption(new Option("--reasoning-mode <mode>", "Reasoning execution mode (pro requires a GPT-5.6 model).").choices(REASONING_MODES).default(DEFAULT_REASONING_MODE))
     .option("--timeout <duration>", "Maximum time to block while polling.", DEFAULT_TIMEOUT)
     .option("--poll-interval <duration>", "Polling interval.", DEFAULT_POLL_INTERVAL)
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))
@@ -47,6 +50,7 @@ export function createProgram(): Command {
         runAsk(prompt, {
           ...opts,
           reasoning: opts.reasoning as ReasoningEffort,
+          reasoningMode: opts.reasoningMode as ReasoningMode,
           format: opts.format as OutputFormat
         }, deps)
       );

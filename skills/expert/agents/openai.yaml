@@ -1,4 +1,4 @@
 interface:
   display_name: "Expert"
-  short_description: "Consult GPT-5.5 Pro from the terminal with context files."
+  short_description: "Consult GPT-5.6 Pro from the terminal with context files."
   default_prompt: "Use expert to get a second opinion on this coding task with multiple relevant files and focused globs attached."

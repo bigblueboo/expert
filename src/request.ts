@@ -1,10 +1,11 @@
 import path from "node:path";
 import type { ResponseCreateParamsNonStreaming, ResponseInputContent } from "openai/resources/responses/responses";
-import type { ContextBundle, OpenAIAdapter, ReasoningEffort, UploadedFile } from "./types.js";
+import type { ContextBundle, OpenAIAdapter, ReasoningEffort, ReasoningMode, UploadedFile } from "./types.js";
 
 export interface ConsultationRequestOptions {
   model: string;
   reasoningEffort: ReasoningEffort;
+  reasoningMode: ReasoningMode;
   prompt: string;
   stdinText?: string;
   context: ContextBundle;
@@ -40,11 +41,17 @@ export async function prepareConsultationRequest(
     }
   ];
 
+  // "standard" is expressed by omitting mode: pre-GPT-5.6 models reject the parameter.
+  const reasoning: ResponseCreateParamsNonStreaming["reasoning"] =
+    options.reasoningMode === "pro"
+      ? { effort: options.reasoningEffort, mode: "pro" }
+      : { effort: options.reasoningEffort };
+
   const body: ResponseCreateParamsNonStreaming = {
     model: options.model,
     background: true,
     store: true,
-    reasoning: { effort: options.reasoningEffort },
+    reasoning,
     input: [
       {
         role: "user",

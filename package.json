@@ -1,7 +1,7 @@
 {
   "name": "expert",
   "version": "0.1.0",
-  "description": "A blocking GPT-5.5 Pro consultation CLI for agents.",
+  "description": "A blocking GPT-5.6 Pro consultation CLI for agents.",
   "type": "module",
   "bin": {
     "expert": "./dist/cli.js"
@@ -24,7 +24,7 @@
     "fast-glob": "^3.3.3",
     "ignore": "^7.0.5",
     "mime-types": "^3.0.1",
-    "openai": "^6.8.1",
+    "openai": "^6.48.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
