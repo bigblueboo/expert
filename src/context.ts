@@ -82,7 +82,6 @@ export interface ResolveContextOptions {
   cwd: string;
   files?: string[];
   dirs?: string[];
-  includes?: string[];
   excludes?: string[];
   maxSingleFileBytes?: number;
   maxTotalBytes?: number;
@@ -96,7 +95,7 @@ export async function resolveContext(options: ResolveContextOptions): Promise<Co
   const maxSingle = options.maxSingleFileBytes ?? DEFAULT_MAX_SINGLE_FILE_BYTES;
   const maxTotal = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES;
   const ignored = await buildIgnore(cwd, options.excludes ?? []);
-  const candidates = await resolveCandidates(options, ignored);
+  const candidates = await resolveCandidates(options);
   const files: ContextFile[] = [];
   const skipped: SkippedContextFile[] = [];
   let totalBytes = 0;
@@ -186,35 +185,26 @@ async function buildIgnore(cwd: string, excludes: string[]) {
   return ig;
 }
 
-async function resolveCandidates(options: ResolveContextOptions, ignored: ReturnType<typeof ignore>): Promise<string[]> {
+async function resolveCandidates(options: ResolveContextOptions): Promise<string[]> {
   const cwd = path.resolve(options.cwd);
   const patterns = [
     ...(options.files ?? []),
-    ...(options.includes ?? []),
     ...(options.dirs ?? []).map((dir) => `${trimTrailingSlash(dir)}/**/*`)
   ];
-  const seen = new Set<string>();
+  if (patterns.length === 0) return [];
 
-  for (const pattern of patterns) {
-    const matches = await fg(pattern, {
-      cwd,
-      absolute: true,
-      dot: true,
-      onlyFiles: false,
-      followSymbolicLinks: false,
-      unique: true,
-      ignore: DEFAULT_EXCLUDES
-    });
+  // fg's ignore only prunes traversal; semantic filtering (gitignore + --exclude) happens in resolveContext.
+  const matches = await fg(patterns, {
+    cwd,
+    absolute: true,
+    dot: true,
+    onlyFiles: false,
+    followSymbolicLinks: false,
+    unique: true,
+    ignore: DEFAULT_EXCLUDES
+  });
 
-    for (const match of matches) {
-      const relative = toPosix(path.relative(cwd, match));
-      if (relative && !ignored.ignores(relative)) {
-        seen.add(path.resolve(match));
-      }
-    }
-  }
-
-  return [...seen].sort();
+  return matches.map((match) => path.resolve(match)).sort();
 }
 
 function trimTrailingSlash(value: string): string {

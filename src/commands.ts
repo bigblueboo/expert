@@ -1,11 +1,11 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ContextBundle, JobRecord, OpenAIAdapter, OutputFormat, ReasoningEffort, ResponseLike } from "./types.js";
+import type { JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ResponseLike } from "./types.js";
 import { resolveContext, readStdinIfRequested, stableContextHash } from "./context.js";
-import { DEFAULT_MODEL } from "./defaults.js";
-import { JobStore } from "./jobs.js";
+import { DEFAULT_MODEL, DEFAULT_POLL_INTERVAL, DEFAULT_REASONING_EFFORT, DEFAULT_TIMEOUT } from "./defaults.js";
+import { JobStore, updateJobFromResponse } from "./jobs.js";
 import { terminalErrorMessage, extractOutputText, normalizeStatus } from "./output.js";
-import { pollResponse, PollTimeoutError, updateJobFromResponse } from "./poller.js";
+import { pollResponse } from "./poller.js";
 import { prepareConsultationRequest } from "./request.js";
 import { formatElapsed, parseDurationMs } from "./time.js";
 
@@ -20,7 +20,6 @@ export interface CommandDeps {
 export interface AskOptions {
   file?: string[];
   dir?: string[];
-  include?: string[];
   exclude?: string[];
   stdin?: boolean;
   dryRun?: boolean;
@@ -32,13 +31,26 @@ export interface AskOptions {
   output?: string;
   maxOutputTokens?: number;
   cancelOnInterrupt?: boolean;
-  fileExpirationSeconds?: number;
+  registerSignals?: boolean;
+}
+
+export type ResumeOptions = Pick<
+  AskOptions,
+  "timeout" | "pollInterval" | "format" | "output" | "cancelOnInterrupt" | "registerSignals"
+>;
+
+interface WaitOptions {
+  timeout?: string;
+  pollInterval?: string;
+  format: OutputFormat;
+  outputPath?: string;
+  cancelOnInterrupt?: boolean;
   registerSignals?: boolean;
 }
 
 export async function runAsk(promptParts: string[], options: AskOptions, deps: CommandDeps): Promise<number> {
   const model = options.model ?? DEFAULT_MODEL;
-  const reasoningEffort = options.reasoning ?? "xhigh";
+  const reasoningEffort = options.reasoning ?? DEFAULT_REASONING_EFFORT;
   const format = options.format ?? "text";
   const prompt = promptParts.join(" ").trim();
   const stdinText = await readStdinIfRequested(Boolean(options.stdin));
@@ -51,15 +63,12 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     cwd: deps.cwd,
     files: options.file ?? [],
     dirs: options.dir ?? [],
-    includes: options.include ?? [],
     excludes: options.exclude ?? []
   });
 
   if (options.dryRun) {
-    writePayload(
-      deps.stdout,
-      format,
-      {
+    if (format === "json") {
+      const payload = {
         model,
         reasoning_effort: reasoningEffort,
         prompt,
@@ -72,9 +81,11 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
         })),
         skipped_files: context.skipped,
         total_bytes: context.totalBytes
-      },
-      context.manifest
-    );
+      };
+      deps.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    } else {
+      deps.stdout.write(`${context.manifest}\n`);
+    }
     return 0;
   }
 
@@ -84,12 +95,12 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     prompt,
     stdinText,
     context,
-    maxOutputTokens: options.maxOutputTokens,
-    fileExpirationSeconds: options.fileExpirationSeconds
+    maxOutputTokens: options.maxOutputTokens
   });
 
   const created = await deps.api.createResponse(prepared.body);
-  const job = await deps.jobStore.create({
+  const outputPath = options.output ? path.resolve(deps.cwd, options.output) : undefined;
+  const record = await deps.jobStore.create({
     responseId: created.id,
     model,
     reasoningEffort,
@@ -98,57 +109,77 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     manifest: context.manifest,
     uploadedFiles: prepared.uploadedFiles,
     skippedFiles: context.skipped,
-    outputPath: options.output ? path.resolve(deps.cwd, options.output) : undefined,
+    outputPath,
     format
   });
 
-  deps.stderr.write(`Started ${job.jobId} (${job.responseId}).\n`);
-  return await waitForJob(job, options, deps, context);
+  deps.stderr.write(`Started ${record.jobId} (${record.responseId}).\n`);
+  return await waitForJob(
+    { responseId: record.responseId, record },
+    {
+      timeout: options.timeout,
+      pollInterval: options.pollInterval,
+      format,
+      outputPath,
+      cancelOnInterrupt: options.cancelOnInterrupt,
+      registerSignals: options.registerSignals
+    },
+    deps
+  );
 }
 
-export async function runResume(id: string, options: Pick<AskOptions, "timeout" | "pollInterval" | "format" | "output" | "cancelOnInterrupt" | "registerSignals">, deps: CommandDeps): Promise<number> {
-  const job = await deps.jobStore.load(id);
-  const outputPath = options.output ? path.resolve(deps.cwd, options.output) : job.outputPath;
-  return await waitForJob({ ...job, outputPath, format: options.format ?? job.format }, options, deps);
+export async function runResume(id: string, options: ResumeOptions, deps: CommandDeps): Promise<number> {
+  const ref = await deps.jobStore.load(id);
+  const outputPath = options.output ? path.resolve(deps.cwd, options.output) : ref.record?.outputPath;
+  const format = options.format ?? ref.record?.format ?? "text";
+  if (ref.record) {
+    ref.record = { ...ref.record, outputPath, format };
+  }
+  return await waitForJob(
+    ref,
+    {
+      timeout: options.timeout,
+      pollInterval: options.pollInterval,
+      format,
+      outputPath,
+      cancelOnInterrupt: options.cancelOnInterrupt,
+      registerSignals: options.registerSignals
+    },
+    deps
+  );
 }
 
 export async function runStatus(id: string, options: { format?: OutputFormat }, deps: CommandDeps): Promise<number> {
-  const job = await deps.jobStore.load(id);
-  const response = await deps.api.retrieveResponse(job.responseId);
-  await saveIfLocalJob(deps.jobStore, updateJobFromResponse(job, response));
+  return await runResponseAction(id, options, deps, (api, responseId) => api.retrieveResponse(responseId));
+}
 
-  const payload = responsePayload(job, response);
+export async function runCancel(id: string, options: { format?: OutputFormat }, deps: CommandDeps): Promise<number> {
+  return await runResponseAction(id, options, deps, (api, responseId) => api.cancelResponse(responseId));
+}
+
+async function runResponseAction(
+  id: string,
+  options: { format?: OutputFormat },
+  deps: CommandDeps,
+  action: (api: OpenAIAdapter, responseId: string) => Promise<ResponseLike>
+): Promise<number> {
+  const ref = await deps.jobStore.load(id);
+  const response = await action(deps.api, ref.responseId);
+  await saveUpdatedRecord(ref, response, deps.jobStore);
+
+  const payload = responsePayload(ref, response);
   if ((options.format ?? "text") === "json") {
     deps.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
-    deps.stdout.write(`${job.jobId}: ${payload.status} (${job.responseId})\n`);
+    deps.stdout.write(`${displayId(ref)}: ${payload.status} (${ref.responseId})\n`);
     if (payload.error) deps.stdout.write(`${payload.error}\n`);
   }
   return 0;
 }
 
-export async function runCancel(id: string, options: { format?: OutputFormat }, deps: CommandDeps): Promise<number> {
-  const job = await deps.jobStore.load(id);
-  const response = await deps.api.cancelResponse(job.responseId);
-  await saveIfLocalJob(deps.jobStore, updateJobFromResponse(job, response));
-
-  const payload = responsePayload(job, response);
-  if ((options.format ?? "text") === "json") {
-    deps.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  } else {
-    deps.stdout.write(`${job.jobId}: ${payload.status} (${job.responseId})\n`);
-  }
-  return 0;
-}
-
-async function waitForJob(
-  job: JobRecord,
-  options: Pick<AskOptions, "timeout" | "pollInterval" | "format" | "output" | "cancelOnInterrupt" | "registerSignals">,
-  deps: CommandDeps,
-  context?: ContextBundle
-): Promise<number> {
-  const timeoutMs = parseDurationMs(options.timeout ?? "60m");
-  const pollIntervalMs = parseDurationMs(options.pollInterval ?? "5s");
+async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps): Promise<number> {
+  const timeoutMs = parseDurationMs(options.timeout ?? DEFAULT_TIMEOUT);
+  const pollIntervalMs = parseDurationMs(options.pollInterval ?? DEFAULT_POLL_INTERVAL);
   const startedAt = Date.now();
   let interrupted = false;
 
@@ -161,106 +192,96 @@ async function waitForJob(
   }
 
   try {
-    const finalResponse = await pollResponse(deps.api, job.responseId, {
+    const outcome = await pollResponse(deps.api, ref.responseId, {
       timeoutMs,
       pollIntervalMs,
       shouldStop: () => interrupted,
       onPoll: async (response) => {
-        await saveIfLocalJob(deps.jobStore, updateJobFromResponse(job, response));
+        await saveUpdatedRecord(ref, response, deps.jobStore);
         deps.stderr.write(`Status ${normalizeStatus(response.status)} after ${formatElapsed(Date.now() - startedAt)}.\n`);
       }
     });
 
-    const updated = updateJobFromResponse(job, finalResponse);
-    await saveIfLocalJob(deps.jobStore, updated);
-
-    if (normalizeStatus(finalResponse.status) !== "completed") {
-      deps.stderr.write(`${terminalErrorMessage(finalResponse)}\n`);
-      return 1;
-    }
-
-    await writeFinalResponse(finalResponse, updated, options.format ?? updated.format, deps);
-    return 0;
-  } catch (error) {
-    if (options.registerSignals !== false) {
-      process.removeListener("SIGINT", onInterrupt);
-    }
-
-    if (interrupted) {
-      if (options.cancelOnInterrupt) {
-        const cancelled = await deps.api.cancelResponse(job.responseId);
-        await saveIfLocalJob(deps.jobStore, updateJobFromResponse(job, cancelled));
-        deps.stderr.write(`Cancelled ${job.jobId} (${job.responseId}).\n`);
+    switch (outcome.kind) {
+      case "stopped": {
+        if (options.cancelOnInterrupt) {
+          const cancelled = await deps.api.cancelResponse(ref.responseId);
+          await saveUpdatedRecord(ref, cancelled, deps.jobStore);
+          deps.stderr.write(`Cancelled ${displayId(ref)} (${ref.responseId}).\n`);
+        } else {
+          if (ref.record) {
+            await deps.jobStore.save({ ...ref.record, status: "interrupted" });
+          }
+          deps.stderr.write(`Interrupted. Response is still running; resume with: expert resume ${displayId(ref)}\n`);
+        }
         return 130;
       }
-      await saveIfLocalJob(deps.jobStore, { ...job, status: "interrupted" });
-      deps.stderr.write(`Interrupted. Response is still running; resume with: expert resume ${job.jobId}\n`);
-      return 130;
-    }
-
-    if (error instanceof PollTimeoutError) {
-      if (error.response) {
-        await saveIfLocalJob(deps.jobStore, updateJobFromResponse(job, error.response));
+      case "timeout": {
+        if (outcome.response) {
+          await saveUpdatedRecord(ref, outcome.response, deps.jobStore);
+        }
+        deps.stderr.write(`Timed out after ${formatElapsed(timeoutMs)}. Resume with: expert resume ${displayId(ref)}\n`);
+        return 124;
       }
-      deps.stderr.write(`Timed out after ${formatElapsed(timeoutMs)}. Resume with: expert resume ${job.jobId}\n`);
-      return 124;
+      default: {
+        await saveUpdatedRecord(ref, outcome.response, deps.jobStore);
+        if (normalizeStatus(outcome.response.status) !== "completed") {
+          deps.stderr.write(`${terminalErrorMessage(outcome.response)}\n`);
+          return 1;
+        }
+        await writeFinalResponse(outcome.response, ref, options, deps);
+        return 0;
+      }
     }
-
-    await saveIfLocalJob(deps.jobStore, {
-      ...job,
-      status: "error",
-      lastError: error instanceof Error ? error.message : String(error)
-    });
+  } catch (error) {
+    if (ref.record) {
+      await deps.jobStore.save({
+        ...ref.record,
+        status: "error",
+        lastError: error instanceof Error ? error.message : String(error)
+      });
+    }
     throw error;
   } finally {
     if (options.registerSignals !== false) {
       process.removeListener("SIGINT", onInterrupt);
     }
-    void context;
   }
 }
 
-async function writeFinalResponse(response: ResponseLike, job: JobRecord, format: OutputFormat, deps: CommandDeps): Promise<void> {
+async function writeFinalResponse(response: ResponseLike, ref: JobRef, options: WaitOptions, deps: CommandDeps): Promise<void> {
   const text = extractOutputText(response);
-  const payload = responsePayload(job, response, text);
+  const payload = responsePayload(ref, response, text);
+  const rendered = options.format === "json" ? `${JSON.stringify(payload, null, 2)}\n` : `${text}\n`;
 
-  if (job.outputPath) {
-    const content = format === "json" ? `${JSON.stringify(payload, null, 2)}\n` : `${text}\n`;
-    await writeFile(job.outputPath, content, "utf8");
+  if (options.outputPath) {
+    await writeFile(options.outputPath, rendered, "utf8");
   }
-
-  if (format === "json") {
-    deps.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-  } else {
-    deps.stdout.write(`${text}\n`);
-  }
+  deps.stdout.write(rendered);
 }
 
-function responsePayload(job: JobRecord, response: ResponseLike, outputText = extractOutputText(response)) {
+function responsePayload(ref: JobRef, response: ResponseLike, outputText = extractOutputText(response)) {
   return {
-    job_id: job.jobId,
-    response_id: job.responseId,
-    model: job.model,
-    reasoning_effort: job.reasoningEffort,
+    job_id: displayId(ref),
+    response_id: ref.responseId,
+    model: ref.record?.model ?? "unknown",
+    reasoning_effort: ref.record?.reasoningEffort ?? null,
     status: normalizeStatus(response.status),
     output_text: outputText,
     error: response.error?.message ?? null,
     incomplete_reason: response.incomplete_details?.reason ?? null,
     usage: response.usage ?? null,
-    uploaded_files: job.uploadedFiles,
-    skipped_files: job.skippedFiles
+    uploaded_files: ref.record?.uploadedFiles ?? [],
+    skipped_files: ref.record?.skippedFiles ?? []
   };
 }
 
-function writePayload(stdout: NodeJS.WritableStream, format: OutputFormat, jsonPayload: unknown, textPayload: string): void {
-  if (format === "json") {
-    stdout.write(`${JSON.stringify(jsonPayload, null, 2)}\n`);
-  } else {
-    stdout.write(`${textPayload}\n`);
-  }
+function displayId(ref: JobRef): string {
+  return ref.record?.jobId ?? ref.responseId;
 }
 
-async function saveIfLocalJob(jobStore: JobStore, job: JobRecord): Promise<void> {
-  if (job.jobId.startsWith("resp_")) return;
-  await jobStore.save(job);
+async function saveUpdatedRecord(ref: JobRef, response: ResponseLike, jobStore: JobStore): Promise<void> {
+  if (!ref.record) return;
+  ref.record = updateJobFromResponse(ref.record, response);
+  await jobStore.save(ref.record);
 }

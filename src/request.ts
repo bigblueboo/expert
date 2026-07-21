@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { ResponseCreateParamsNonStreaming, ResponseInputContent } from "openai/resources/responses/responses";
 import type { ContextBundle, OpenAIAdapter, ReasoningEffort, UploadedFile } from "./types.js";
 
 export interface ConsultationRequestOptions {
@@ -8,11 +9,10 @@ export interface ConsultationRequestOptions {
   stdinText?: string;
   context: ContextBundle;
   maxOutputTokens?: number;
-  fileExpirationSeconds?: number;
 }
 
 export interface PreparedConsultationRequest {
-  body: Record<string, unknown>;
+  body: ResponseCreateParamsNonStreaming;
   uploadedFiles: UploadedFile[];
   fullPrompt: string;
 }
@@ -21,25 +21,26 @@ export async function prepareConsultationRequest(
   api: OpenAIAdapter,
   options: ConsultationRequestOptions
 ): Promise<PreparedConsultationRequest> {
-  const uploadedFiles: UploadedFile[] = [];
-  for (const file of options.context.files) {
-    uploadedFiles.push(await api.uploadFile(file.absolutePath, options.fileExpirationSeconds));
-  }
+  const uploadedFiles = await Promise.all(
+    options.context.files.map((file) => api.uploadFile(file.absolutePath))
+  );
 
   const fullPrompt = buildFullPrompt(options.prompt, options.stdinText ?? "", options.context.manifest);
-  const content: Array<Record<string, unknown>> = [
-    ...uploadedFiles.map((file) => ({
-      type: "input_file",
-      file_id: file.id,
-      filename: path.basename(file.filename)
-    })),
+  const content: ResponseInputContent[] = [
+    ...uploadedFiles.map(
+      (file): ResponseInputContent => ({
+        type: "input_file",
+        file_id: file.id,
+        filename: path.basename(file.filename)
+      })
+    ),
     {
       type: "input_text",
       text: fullPrompt
     }
   ];
 
-  const body: Record<string, unknown> = {
+  const body: ResponseCreateParamsNonStreaming = {
     model: options.model,
     background: true,
     store: true,

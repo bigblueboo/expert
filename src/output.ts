@@ -1,18 +1,16 @@
-import type { ResponseLike, ResponseStatus } from "./types.js";
+import { RESPONSE_STATUSES } from "./types.js";
+import type { JobStatus, ResponseLike, ResponseStatus } from "./types.js";
 
 export const ACTIVE_STATUSES = new Set(["queued", "in_progress"]);
-export const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "incomplete"]);
+
+const KNOWN_RESPONSE_STATUSES: ReadonlySet<string> = new Set(RESPONSE_STATUSES);
 
 export function isActiveStatus(status: string | null | undefined): boolean {
   return ACTIVE_STATUSES.has(status ?? "");
 }
 
-export function isTerminalStatus(status: string | null | undefined): boolean {
-  return TERMINAL_STATUSES.has(status ?? "");
-}
-
-export function normalizeStatus(status: string | null | undefined): ResponseStatus | string {
-  return status ?? "unknown";
+export function normalizeStatus(status: string | null | undefined): JobStatus {
+  return status && KNOWN_RESPONSE_STATUSES.has(status) ? (status as ResponseStatus) : "unknown";
 }
 
 export function extractOutputText(response: ResponseLike): string {

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import { runAsk, runCancel, runResume, runStatus } from "../src/commands.js";
 import { resolveContext } from "../src/context.js";
 import { JobStore } from "../src/jobs.js";
@@ -10,7 +11,7 @@ import type { OpenAIAdapter, ResponseLike, UploadedFile } from "../src/types.js"
 
 class MockOpenAI implements OpenAIAdapter {
   uploads: string[] = [];
-  createdBodies: Record<string, unknown>[] = [];
+  createdBodies: ResponseCreateParamsNonStreaming[] = [];
   retrieveQueue: ResponseLike[] = [];
   cancelResponseValue: ResponseLike = { id: "resp_mock", status: "cancelled" };
 
@@ -23,7 +24,7 @@ class MockOpenAI implements OpenAIAdapter {
     };
   }
 
-  async createResponse(body: Record<string, unknown>): Promise<ResponseLike> {
+  async createResponse(body: ResponseCreateParamsNonStreaming): Promise<ResponseLike> {
     this.createdBodies.push(body);
     return { id: "resp_mock", status: "queued" };
   }

@@ -2,7 +2,9 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { JobRecord } from "./types.js";
+import { JOB_STATUSES } from "./types.js";
+import type { JobRecord, JobRef, ResponseLike } from "./types.js";
+import { normalizeStatus } from "./output.js";
 
 const uploadedFileSchema = z.object({
   id: z.string(),
@@ -20,7 +22,7 @@ const jobRecordSchema: z.ZodType<JobRecord> = z.object({
   responseId: z.string(),
   model: z.string(),
   reasoningEffort: z.enum(["medium", "high", "xhigh"]),
-  status: z.string(),
+  status: z.enum(JOB_STATUSES),
   createdAt: z.string(),
   updatedAt: z.string(),
   prompt: z.string(),
@@ -60,28 +62,15 @@ export class JobStore {
     await rename(temp, target);
   }
 
-  async load(id: string): Promise<JobRecord> {
+  async load(id: string): Promise<JobRef> {
     if (id.startsWith("resp_")) {
-      const byResponse = await this.findByResponseId(id);
-      if (byResponse) return byResponse;
-      return jobRecordSchema.parse({
-        jobId: id,
-        responseId: id,
-        model: "unknown",
-        reasoningEffort: "xhigh",
-        status: "unknown",
-        createdAt: new Date(0).toISOString(),
-        updatedAt: new Date(0).toISOString(),
-        prompt: "",
-        manifest: "",
-        uploadedFiles: [],
-        skippedFiles: [],
-        format: "text"
-      });
+      const record = await this.findByResponseId(id);
+      return { responseId: id, record: record ?? undefined };
     }
 
     const raw = await readFile(this.pathForJob(id), "utf8");
-    return jobRecordSchema.parse(JSON.parse(raw));
+    const record = jobRecordSchema.parse(JSON.parse(raw));
+    return { responseId: record.responseId, record };
   }
 
   private async findByResponseId(responseId: string): Promise<JobRecord | null> {
@@ -104,6 +93,14 @@ export class JobStore {
   private pathForJob(jobId: string): string {
     return path.join(this.jobsDir, `${jobId}.json`);
   }
+}
+
+export function updateJobFromResponse(job: JobRecord, response: ResponseLike): JobRecord {
+  return {
+    ...job,
+    status: normalizeStatus(response.status),
+    lastError: response.error?.message ?? job.lastError
+  };
 }
 
 export function defaultExpertHome(env: NodeJS.ProcessEnv = process.env): string {

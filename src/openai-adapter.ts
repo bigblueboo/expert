@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import OpenAI from "openai";
+import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import type { OpenAIAdapter, ResponseLike, UploadedFile } from "./types.js";
 
 export class OpenAISdkAdapter implements OpenAIAdapter {
@@ -13,19 +14,11 @@ export class OpenAISdkAdapter implements OpenAIAdapter {
     this.baseURL = baseURL;
   }
 
-  async uploadFile(filePath: string, expiresAfterSeconds?: number): Promise<UploadedFile> {
-    const body: Record<string, unknown> = {
+  async uploadFile(filePath: string): Promise<UploadedFile> {
+    const result = await this.getClient().files.create({
       file: createReadStream(filePath),
       purpose: "user_data"
-    };
-    if (expiresAfterSeconds) {
-      body.expires_after = {
-        anchor: "created_at",
-        seconds: expiresAfterSeconds
-      };
-    }
-
-    const result = await this.getClient().files.create(body as never);
+    });
     return {
       id: result.id,
       filename: result.filename ?? path.basename(filePath),
@@ -33,16 +26,16 @@ export class OpenAISdkAdapter implements OpenAIAdapter {
     };
   }
 
-  async createResponse(body: Record<string, unknown>): Promise<ResponseLike> {
-    return (await this.getClient().responses.create(body as never)) as ResponseLike;
+  async createResponse(body: ResponseCreateParamsNonStreaming): Promise<ResponseLike> {
+    return await this.getClient().responses.create(body);
   }
 
   async retrieveResponse(id: string): Promise<ResponseLike> {
-    return (await this.getClient().responses.retrieve(id)) as ResponseLike;
+    return await this.getClient().responses.retrieve(id);
   }
 
   async cancelResponse(id: string): Promise<ResponseLike> {
-    return (await this.getClient().responses.cancel(id)) as ResponseLike;
+    return await this.getClient().responses.cancel(id);
   }
 
   private getClient(): OpenAI {

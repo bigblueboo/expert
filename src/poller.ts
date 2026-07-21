@@ -1,5 +1,5 @@
-import type { JobRecord, OpenAIAdapter, ResponseLike } from "./types.js";
-import { isActiveStatus, normalizeStatus } from "./output.js";
+import type { OpenAIAdapter, ResponseLike } from "./types.js";
+import { isActiveStatus } from "./output.js";
 import { sleep } from "./time.js";
 
 export interface PollOptions {
@@ -9,24 +9,23 @@ export interface PollOptions {
   shouldStop?: () => boolean;
 }
 
-export class PollTimeoutError extends Error {
-  constructor(readonly response: ResponseLike | null, readonly timeoutMs: number) {
-    super(`Timed out after ${timeoutMs}ms waiting for response.`);
-  }
-}
+export type PollOutcome =
+  | { kind: "terminal"; response: ResponseLike }
+  | { kind: "stopped"; response: ResponseLike | null }
+  | { kind: "timeout"; response: ResponseLike | null };
 
 export async function pollResponse(
   api: OpenAIAdapter,
   responseId: string,
   options: PollOptions
-): Promise<ResponseLike> {
+): Promise<PollOutcome> {
   const startedAt = Date.now();
   let attempt = 0;
   let lastResponse: ResponseLike | null = null;
 
   while (Date.now() - startedAt <= options.timeoutMs) {
     if (options.shouldStop?.()) {
-      throw new Error("Polling stopped.");
+      return { kind: "stopped", response: lastResponse };
     }
 
     try {
@@ -35,7 +34,7 @@ export async function pollResponse(
       lastResponse = response;
       await options.onPoll?.(response);
       if (!isActiveStatus(response.status)) {
-        return response;
+        return { kind: "terminal", response };
       }
       await sleep(options.pollIntervalMs);
     } catch (error) {
@@ -45,15 +44,7 @@ export async function pollResponse(
     }
   }
 
-  throw new PollTimeoutError(lastResponse, options.timeoutMs);
-}
-
-export function updateJobFromResponse(job: JobRecord, response: ResponseLike): JobRecord {
-  return {
-    ...job,
-    status: normalizeStatus(response.status),
-    lastError: response.error?.message ?? job.lastError
-  };
+  return { kind: "timeout", response: lastResponse };
 }
 
 function isRetryableError(error: unknown): boolean {

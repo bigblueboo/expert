@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import { Command, Option } from "commander";
 import { runAsk, runCancel, runResume, runStatus } from "./commands.js";
-import { DEFAULT_MODEL, DEFAULT_MODEL_DISPLAY_NAME } from "./defaults.js";
+import {
+  DEFAULT_MODEL,
+  DEFAULT_MODEL_DISPLAY_NAME,
+  DEFAULT_POLL_INTERVAL,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_TIMEOUT
+} from "./defaults.js";
 import { defaultExpertHome, JobStore } from "./jobs.js";
 import { OpenAISdkAdapter } from "./openai-adapter.js";
 import type { OutputFormat, ReasoningEffort } from "./types.js";
@@ -25,14 +31,13 @@ export function createProgram(): Command {
     .argument("[prompt...]", "Prompt text to send.")
     .option("-f, --file <pathOrGlob>", "Attach a file or glob. Repeat for multiple files/globs.", collect, [])
     .option("-d, --dir <path>", "Attach files under a directory. Repeatable.", collect, [])
-    .option("--include <glob>", "Attach files matching a glob. Repeatable.", collect, [])
     .option("--exclude <glob>", "Exclude files matching a glob. Repeatable.", collect, [])
     .option("--stdin", "Read additional prompt/context from stdin.")
     .option("--dry-run", "Show resolved context without calling OpenAI.")
     .option("--model <model>", "Model to use.", DEFAULT_MODEL)
-    .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(["medium", "high", "xhigh"]).default("xhigh"))
-    .option("--timeout <duration>", "Maximum time to block while polling.", "60m")
-    .option("--poll-interval <duration>", "Polling interval.", "5s")
+    .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(["medium", "high", "xhigh"]).default(DEFAULT_REASONING_EFFORT))
+    .option("--timeout <duration>", "Maximum time to block while polling.", DEFAULT_TIMEOUT)
+    .option("--poll-interval <duration>", "Polling interval.", DEFAULT_POLL_INTERVAL)
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))
     .option("-o, --output <path>", "Write final answer to a file.")
     .option("--max-output-tokens <n>", "Maximum output tokens.", parseInteger)
@@ -51,8 +56,8 @@ export function createProgram(): Command {
     .command("resume")
     .description("Resume polling a saved job id or raw response id.")
     .argument("<jobIdOrResponseId>")
-    .option("--timeout <duration>", "Maximum time to block while polling.", "60m")
-    .option("--poll-interval <duration>", "Polling interval.", "5s")
+    .option("--timeout <duration>", "Maximum time to block while polling.", DEFAULT_TIMEOUT)
+    .option("--poll-interval <duration>", "Polling interval.", DEFAULT_POLL_INTERVAL)
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]))
     .option("-o, --output <path>", "Write final answer to a file.")
     .option("--cancel-on-interrupt", "Cancel the background response on Ctrl-C.")

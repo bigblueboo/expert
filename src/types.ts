@@ -1,13 +1,20 @@
+import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
+
 export type ReasoningEffort = "medium" | "high" | "xhigh";
 export type OutputFormat = "text" | "json";
 
-export type ResponseStatus =
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "incomplete";
+export const RESPONSE_STATUSES = [
+  "queued",
+  "in_progress",
+  "completed",
+  "failed",
+  "cancelled",
+  "incomplete"
+] as const;
+export type ResponseStatus = (typeof RESPONSE_STATUSES)[number];
+
+export const JOB_STATUSES = [...RESPONSE_STATUSES, "interrupted", "error", "unknown"] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export interface ResponseLike {
   id: string;
@@ -26,8 +33,8 @@ export interface UploadedFile {
 }
 
 export interface OpenAIAdapter {
-  uploadFile(path: string, expiresAfterSeconds?: number): Promise<UploadedFile>;
-  createResponse(body: Record<string, unknown>): Promise<ResponseLike>;
+  uploadFile(path: string): Promise<UploadedFile>;
+  createResponse(body: ResponseCreateParamsNonStreaming): Promise<ResponseLike>;
   retrieveResponse(id: string): Promise<ResponseLike>;
   cancelResponse(id: string): Promise<ResponseLike>;
 }
@@ -56,7 +63,7 @@ export interface JobRecord {
   responseId: string;
   model: string;
   reasoningEffort: ReasoningEffort;
-  status: string;
+  status: JobStatus;
   createdAt: string;
   updatedAt: string;
   prompt: string;
@@ -66,4 +73,9 @@ export interface JobRecord {
   outputPath?: string;
   format: OutputFormat;
   lastError?: string;
+}
+
+export interface JobRef {
+  responseId: string;
+  record?: JobRecord;
 }
