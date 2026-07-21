@@ -87,8 +87,8 @@ export interface ResolveContextOptions {
   maxTotalBytes?: number;
 }
 
-export const DEFAULT_MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024;
-export const DEFAULT_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+const DEFAULT_MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 
 export async function resolveContext(options: ResolveContextOptions): Promise<ContextBundle> {
   const cwd = path.resolve(options.cwd);

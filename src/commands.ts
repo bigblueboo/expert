@@ -234,7 +234,7 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
         deps.stderr.write(`Timed out after ${formatElapsed(timeoutMs)}. Resume with: expert resume ${displayId(ref)}\n`);
         return 124;
       }
-      default: {
+      case "terminal": {
         await saveUpdatedRecord(ref, outcome.response, deps.jobStore);
         if (normalizeStatus(outcome.response.status) !== "completed") {
           deps.stderr.write(`${terminalErrorMessage(outcome.response)}\n`);
@@ -244,6 +244,7 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
         return 0;
       }
     }
+    return assertNever(outcome);
   } catch (error) {
     if (ref.record) {
       await deps.jobStore.save({
@@ -296,4 +297,8 @@ async function saveUpdatedRecord(ref: JobRef, response: ResponseLike, jobStore: 
   if (!ref.record) return;
   ref.record = updateJobFromResponse(ref.record, response);
   await jobStore.save(ref.record);
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled poll outcome: ${JSON.stringify(value)}`);
 }

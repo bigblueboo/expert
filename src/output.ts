@@ -1,7 +1,7 @@
 import { RESPONSE_STATUSES } from "./types.js";
 import type { JobStatus, ResponseLike, ResponseStatus } from "./types.js";
 
-export const ACTIVE_STATUSES = new Set(["queued", "in_progress"]);
+const ACTIVE_STATUSES = new Set(["queued", "in_progress"]);
 
 const KNOWN_RESPONSE_STATUSES: ReadonlySet<string> = new Set(RESPONSE_STATUSES);
 

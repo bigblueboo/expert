@@ -18,12 +18,14 @@ export interface PreparedConsultationRequest {
   fullPrompt: string;
 }
 
+const UPLOAD_CONCURRENCY = 8;
+
 export async function prepareConsultationRequest(
   api: OpenAIAdapter,
   options: ConsultationRequestOptions
 ): Promise<PreparedConsultationRequest> {
-  const uploadedFiles = await Promise.all(
-    options.context.files.map((file) => api.uploadFile(file.absolutePath))
+  const uploadedFiles = await mapWithConcurrency(options.context.files, UPLOAD_CONCURRENCY, (file) =>
+    api.uploadFile(file.absolutePath)
   );
 
   const fullPrompt = buildFullPrompt(options.prompt, options.stdinText ?? "", options.context.manifest);
@@ -67,7 +69,20 @@ export async function prepareConsultationRequest(
   return { body, uploadedFiles, fullPrompt };
 }
 
-export function buildFullPrompt(prompt: string, stdinText: string, manifest: string): string {
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function buildFullPrompt(prompt: string, stdinText: string, manifest: string): string {
   const sections = [
     "You are being consulted by another agent. Answer directly, use the attached context where relevant, and call out uncertainty or missing information.",
     "",

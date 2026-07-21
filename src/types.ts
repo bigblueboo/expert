@@ -23,7 +23,7 @@ export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export interface ResponseLike {
   id: string;
-  status?: ResponseStatus | string | null;
+  status?: string | null;
   output_text?: string | null;
   output?: unknown;
   error?: { code?: string | null; message?: string | null } | null;
