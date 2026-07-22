@@ -128,7 +128,8 @@ describe("CLI e2e", () => {
     await server.stop();
   });
 
-  it("asks with an attached file, uses xhigh by default, persists a job, and supports status/cancel", async () => {
+  // Spawns three CLI processes; SDK import time makes each ~1-2s on a loaded machine.
+  it("asks with an attached file, uses xhigh by default, persists a job, and supports status/cancel", { timeout: 30_000 }, async () => {
     const ask = await runCli(
       ["ask", "Consult on this", "--file", "notes.md", "--timeout", "3s", "--poll-interval", "1ms", "--format", "json"],
       { cwd, baseURL, expertHome }

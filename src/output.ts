@@ -26,8 +26,9 @@ export function extractOutputText(response: ResponseLike): string {
       if (!Array.isArray(content)) continue;
       for (const contentPart of content) {
         if (!contentPart || typeof contentPart !== "object") continue;
-        const text = (contentPart as { text?: unknown }).text;
+        const { text, refusal } = contentPart as { text?: unknown; refusal?: unknown };
         if (typeof text === "string") parts.push(text);
+        else if (typeof refusal === "string") parts.push(`[refusal] ${refusal}`);
       }
     }
   }

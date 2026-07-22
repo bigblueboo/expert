@@ -19,11 +19,11 @@ export async function pollResponse(
   responseId: string,
   options: PollOptions
 ): Promise<PollOutcome> {
-  const startedAt = Date.now();
+  const deadline = Date.now() + options.timeoutMs;
   let attempt = 0;
   let lastResponse: ResponseLike | null = null;
 
-  while (Date.now() - startedAt <= options.timeoutMs) {
+  while (Date.now() < deadline) {
     if (options.shouldStop?.()) {
       return { kind: "stopped", response: lastResponse };
     }
@@ -36,15 +36,31 @@ export async function pollResponse(
       if (!isActiveStatus(response.status)) {
         return { kind: "terminal", response };
       }
-      await sleep(options.pollIntervalMs);
+      await interruptibleSleep(cappedDelay(options.pollIntervalMs, deadline), options.shouldStop);
     } catch (error) {
       if (!isRetryableError(error)) throw error;
       const delayMs = retryDelayMs(error, attempt++, options.pollIntervalMs);
-      await sleep(delayMs);
+      await interruptibleSleep(cappedDelay(delayMs, deadline), options.shouldStop);
     }
   }
 
   return { kind: "timeout", response: lastResponse };
+}
+
+// The timeout is a hard deadline: never sleep past it, even when the server
+// requests a longer Retry-After.
+function cappedDelay(delayMs: number, deadline: number): number {
+  return Math.max(0, Math.min(delayMs, deadline - Date.now()));
+}
+
+// Sleep in short slices so Ctrl-C is honored mid-interval instead of after a
+// full poll or retry delay.
+async function interruptibleSleep(ms: number, shouldStop?: () => boolean): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (shouldStop?.()) return;
+    await sleep(Math.min(250, end - Date.now()));
+  }
 }
 
 function isRetryableError(error: unknown): boolean {

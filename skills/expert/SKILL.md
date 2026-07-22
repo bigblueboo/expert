@@ -100,4 +100,4 @@ expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout
 
 ## Defaults
 
-The CLI defaults to `gpt-5.6` with `reasoning.mode: pro` (GPT-5.6 Pro), `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, and a 5 second polling interval. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+The CLI defaults to `gpt-5.6` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, and a 5 second polling interval. `reasoning.mode` defaults to `pro` for GPT-5.6 models (GPT-5.6 Pro) and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.

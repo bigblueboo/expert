@@ -1,13 +1,13 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ReasoningMode, ResponseLike } from "./types.js";
+import type { JobRecord, JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ReasoningMode, ResponseLike } from "./types.js";
 import { resolveContext, readStdinIfRequested, stableContextHash } from "./context.js";
 import {
   DEFAULT_MODEL,
   DEFAULT_POLL_INTERVAL,
   DEFAULT_REASONING_EFFORT,
-  DEFAULT_REASONING_MODE,
-  DEFAULT_TIMEOUT
+  DEFAULT_TIMEOUT,
+  defaultReasoningMode
 } from "./defaults.js";
 import { JobStore, updateJobFromResponse } from "./jobs.js";
 import { terminalErrorMessage, extractOutputText, normalizeStatus } from "./output.js";
@@ -58,7 +58,7 @@ interface WaitOptions {
 export async function runAsk(promptParts: string[], options: AskOptions, deps: CommandDeps): Promise<number> {
   const model = options.model ?? DEFAULT_MODEL;
   const reasoningEffort = options.reasoning ?? DEFAULT_REASONING_EFFORT;
-  const reasoningMode = options.reasoningMode ?? DEFAULT_REASONING_MODE;
+  const reasoningMode = options.reasoningMode ?? defaultReasoningMode(model);
   const format = options.format ?? "text";
   const prompt = promptParts.join(" ").trim();
   const stdinText = await readStdinIfRequested(Boolean(options.stdin));
@@ -82,7 +82,7 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
         reasoning_mode: reasoningMode,
         prompt,
         stdin_bytes: Buffer.byteLength(stdinText),
-        context_hash: stableContextHash(context),
+        context_hash: await stableContextHash(context),
         files: context.files.map((file) => ({
           path: file.relativePath,
           bytes: file.bytes,
@@ -109,24 +109,34 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
   });
 
   const created = await deps.api.createResponse(prepared.body);
+  // The response is already running server-side; surface its id before doing
+  // anything that can fail, so it is never orphaned without a resume handle.
+  deps.stderr.write(`Created response ${created.id}.\n`);
   const outputPath = options.output ? path.resolve(deps.cwd, options.output) : undefined;
-  const record = await deps.jobStore.create({
-    responseId: created.id,
-    model,
-    reasoningEffort,
-    reasoningMode,
-    status: normalizeStatus(created.status),
-    prompt: prepared.fullPrompt,
-    manifest: context.manifest,
-    uploadedFiles: prepared.uploadedFiles,
-    skippedFiles: context.skipped,
-    outputPath,
-    format
-  });
+  let record: JobRecord | undefined;
+  try {
+    record = await deps.jobStore.create({
+      responseId: created.id,
+      model,
+      reasoningEffort,
+      reasoningMode,
+      status: normalizeStatus(created.status),
+      prompt: prepared.fullPrompt,
+      manifest: context.manifest,
+      uploadedFiles: prepared.uploadedFiles,
+      skippedFiles: context.skipped,
+      outputPath,
+      format
+    });
+    deps.stderr.write(`Started ${record.jobId} (${record.responseId}).\n`);
+  } catch (error) {
+    deps.stderr.write(
+      `Warning: could not persist job record (${errorText(error)}). The response is still running; resume with: expert resume ${created.id}\n`
+    );
+  }
 
-  deps.stderr.write(`Started ${record.jobId} (${record.responseId}).\n`);
   return await waitForJob(
-    { responseId: record.responseId, record },
+    { responseId: created.id, record },
     {
       timeout: options.timeout,
       pollInterval: options.pollInterval,
@@ -176,7 +186,7 @@ async function runResponseAction(
 ): Promise<number> {
   const ref = await deps.jobStore.load(id);
   const response = await action(deps.api, ref.responseId);
-  await saveUpdatedRecord(ref, response, deps.jobStore);
+  await saveUpdatedRecord(ref, response, deps);
 
   const payload = responsePayload(ref, response);
   if ((options.format ?? "text") === "json") {
@@ -208,7 +218,7 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
       pollIntervalMs,
       shouldStop: () => interrupted,
       onPoll: async (response) => {
-        await saveUpdatedRecord(ref, response, deps.jobStore);
+        await saveUpdatedRecord(ref, response, deps);
         deps.stderr.write(`Status ${normalizeStatus(response.status)} after ${formatElapsed(Date.now() - startedAt)}.\n`);
       }
     });
@@ -217,11 +227,11 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
       case "stopped": {
         if (options.cancelOnInterrupt) {
           const cancelled = await deps.api.cancelResponse(ref.responseId);
-          await saveUpdatedRecord(ref, cancelled, deps.jobStore);
+          await saveUpdatedRecord(ref, cancelled, deps);
           deps.stderr.write(`Cancelled ${displayId(ref)} (${ref.responseId}).\n`);
         } else {
           if (ref.record) {
-            await deps.jobStore.save({ ...ref.record, status: "interrupted" });
+            await trySaveRecord({ ...ref.record, status: "interrupted" }, deps);
           }
           deps.stderr.write(`Interrupted. Response is still running; resume with: expert resume ${displayId(ref)}\n`);
         }
@@ -229,14 +239,19 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
       }
       case "timeout": {
         if (outcome.response) {
-          await saveUpdatedRecord(ref, outcome.response, deps.jobStore);
+          await saveUpdatedRecord(ref, outcome.response, deps);
         }
         deps.stderr.write(`Timed out after ${formatElapsed(timeoutMs)}. Resume with: expert resume ${displayId(ref)}\n`);
         return 124;
       }
       case "terminal": {
-        await saveUpdatedRecord(ref, outcome.response, deps.jobStore);
+        await saveUpdatedRecord(ref, outcome.response, deps);
         if (normalizeStatus(outcome.response.status) !== "completed") {
+          if (options.format === "json") {
+            // Keep machine consumers working on failure: emit the same
+            // envelope they get on success, including any partial output.
+            deps.stdout.write(`${JSON.stringify(responsePayload(ref, outcome.response), null, 2)}\n`);
+          }
           deps.stderr.write(`${terminalErrorMessage(outcome.response)}\n`);
           return 1;
         }
@@ -247,11 +262,10 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
     return assertNever(outcome);
   } catch (error) {
     if (ref.record) {
-      await deps.jobStore.save({
-        ...ref.record,
-        status: "error",
-        lastError: error instanceof Error ? error.message : String(error)
-      });
+      await trySaveRecord(
+        { ...ref.record, status: "error", lastError: errorText(error) },
+        deps
+      );
     }
     throw error;
   } finally {
@@ -263,6 +277,9 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
 
 async function writeFinalResponse(response: ResponseLike, ref: JobRef, options: WaitOptions, deps: CommandDeps): Promise<void> {
   const text = extractOutputText(response);
+  if (!text) {
+    deps.stderr.write("Warning: response completed with no output text.\n");
+  }
   const payload = responsePayload(ref, response, text);
   const rendered = options.format === "json" ? `${JSON.stringify(payload, null, 2)}\n` : `${text}\n`;
 
@@ -293,10 +310,24 @@ function displayId(ref: JobRef): string {
   return ref.record?.jobId ?? ref.responseId;
 }
 
-async function saveUpdatedRecord(ref: JobRef, response: ResponseLike, jobStore: JobStore): Promise<void> {
+async function saveUpdatedRecord(ref: JobRef, response: ResponseLike, deps: CommandDeps): Promise<void> {
   if (!ref.record) return;
   ref.record = updateJobFromResponse(ref.record, response);
-  await jobStore.save(ref.record);
+  await trySaveRecord(ref.record, deps);
+}
+
+// The local record is a convenience; a disk error must never abort polling or
+// suppress an answer the API already returned.
+async function trySaveRecord(record: JobRecord, deps: CommandDeps): Promise<void> {
+  try {
+    await deps.jobStore.save(record);
+  } catch (error) {
+    deps.stderr.write(`Warning: failed to save job record: ${errorText(error)}\n`);
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function assertNever(value: never): never {

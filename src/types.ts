@@ -38,7 +38,8 @@ export interface UploadedFile {
 }
 
 export interface OpenAIAdapter {
-  uploadFile(path: string): Promise<UploadedFile>;
+  uploadFile(path: string, uploadName: string): Promise<UploadedFile>;
+  deleteFile(id: string): Promise<void>;
   createResponse(body: ResponseCreateParamsNonStreaming): Promise<ResponseLike>;
   retrieveResponse(id: string): Promise<ResponseLike>;
   cancelResponse(id: string): Promise<ResponseLike>;
@@ -64,6 +65,7 @@ export interface ContextBundle {
 }
 
 export interface JobRecord {
+  schemaVersion?: number;
   jobId: string;
   responseId: string;
   model: string;

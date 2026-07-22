@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { Command, Option } from "commander";
 import { runAsk, runCancel, runResume, runStatus } from "./commands.js";
 import {
@@ -6,7 +9,6 @@ import {
   DEFAULT_MODEL_DISPLAY_NAME,
   DEFAULT_POLL_INTERVAL,
   DEFAULT_REASONING_EFFORT,
-  DEFAULT_REASONING_MODE,
   DEFAULT_TIMEOUT
 } from "./defaults.js";
 import { defaultExpertHome, JobStore } from "./jobs.js";
@@ -25,7 +27,7 @@ export function createProgram(): Command {
   program
     .name("expert")
     .description(`Consult ${DEFAULT_MODEL_DISPLAY_NAME} with explicit local context and resumable background polling.`)
-    .version("0.1.0");
+    .version(packageVersion());
 
   program
     .command("ask")
@@ -38,7 +40,7 @@ export function createProgram(): Command {
     .option("--dry-run", "Show resolved context without calling OpenAI.")
     .option("--model <model>", "Model to use.", DEFAULT_MODEL)
     .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(REASONING_EFFORTS).default(DEFAULT_REASONING_EFFORT))
-    .addOption(new Option("--reasoning-mode <mode>", "Reasoning execution mode (pro requires a GPT-5.6 model).").choices(REASONING_MODES).default(DEFAULT_REASONING_MODE))
+    .addOption(new Option("--reasoning-mode <mode>", "Reasoning execution mode (default: pro for GPT-5.6 models, standard otherwise).").choices(REASONING_MODES))
     .option("--timeout <duration>", "Maximum time to block while polling.", DEFAULT_TIMEOUT)
     .option("--poll-interval <duration>", "Polling interval.", DEFAULT_POLL_INTERVAL)
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))
@@ -111,14 +113,34 @@ function createDeps() {
   };
 }
 
-function parseInteger(value: string): number {
+export function parseInteger(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Invalid positive integer: ${value}`);
+  }
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`Invalid positive integer: ${value}`);
   }
   return parsed;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function packageVersion(): string {
+  const pkg = createRequire(import.meta.url)("../package.json") as { version?: string };
+  return pkg.version ?? "0.0.0";
+}
+
+// Compare via file URLs so install paths with spaces or unusual characters
+// still match, and resolve symlinks so npm bin shims are recognized.
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   await createProgram().parseAsync(process.argv);
 }

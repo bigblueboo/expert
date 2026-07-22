@@ -58,7 +58,7 @@ expert ask "Review mixed context" --file README.md --file "src/**/*.ts" --file "
 By default `ask` uses:
 
 - `model: gpt-5.6`
-- `reasoning.mode: pro` (GPT-5.6 Pro; pass `--reasoning-mode standard` for non-GPT-5.6 models)
+- `reasoning.mode: pro` for GPT-5.6 models, `standard` otherwise (override with `--reasoning-mode`)
 - `reasoning.effort: xhigh`
 - `background: true`
 - `store: true`
@@ -79,7 +79,19 @@ Use `--dry-run --format json` to inspect the resolved context before spending to
 expert ask "Check context" --file package.json --file "src/**/*.ts" --file "test/**/*.ts" --dry-run --format json
 ```
 
-Job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+Job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set. Records contain the full prompt and context manifest and are written with `0600` permissions.
+
+## Context selection notes
+
+- `--exclude` patterns use gitignore syntax, not plain globs. Safety defaults (`.env`, `*.pem`, `node_modules/`, …) and your `--exclude` patterns are applied unconditionally; a `.gitignore` negation (`!file`) cannot re-include them.
+- Symbolic links are never followed; they are reported in the skipped-files list.
+- An explicitly named `--file` that does not exist is an error. Glob patterns that match nothing are reported as skipped.
+- `-o/--output` writes the rendered result (the full JSON envelope under `--format json`) to the file and still prints it to stdout.
+
+## Data handling
+
+- Attached files are uploaded to the OpenAI Files API with `purpose: "user_data"`, and responses are created with `store: true`. Uploaded files and stored responses persist in your OpenAI account until deleted there; the CLI only deletes uploads when a later upload in the same batch fails.
+- `OPENAI_BASE_URL` redirects all traffic — including your API key and uploaded file content — to the given host. It exists for testing against mock servers; treat it as security-sensitive.
 
 ## Skill layout
 
@@ -92,4 +104,4 @@ skills/expert/
     └── openai.yaml
 ```
 
-The skill teaches Codex when and how to use the `expert` CLI for GPT-5.5 Pro second opinions. It assumes the `expert` CLI is available on `PATH` and `OPENAI_API_KEY` is configured.
+The skill teaches Codex when and how to use the `expert` CLI for GPT-5.6 Pro second opinions. It assumes the `expert` CLI is available on `PATH` and `OPENAI_API_KEY` is configured.

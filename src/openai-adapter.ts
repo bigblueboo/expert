@@ -1,6 +1,5 @@
 import { createReadStream } from "node:fs";
-import path from "node:path";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import type { OpenAIAdapter, ResponseLike, UploadedFile } from "./types.js";
 
@@ -14,16 +13,20 @@ export class OpenAISdkAdapter implements OpenAIAdapter {
     this.baseURL = baseURL;
   }
 
-  async uploadFile(filePath: string): Promise<UploadedFile> {
+  async uploadFile(filePath: string, uploadName: string): Promise<UploadedFile> {
     const result = await this.getClient().files.create({
-      file: createReadStream(filePath),
+      file: await toFile(createReadStream(filePath), uploadName),
       purpose: "user_data"
     });
     return {
       id: result.id,
-      filename: result.filename ?? path.basename(filePath),
+      filename: result.filename ?? uploadName,
       bytes: Number(result.bytes ?? 0)
     };
+  }
+
+  async deleteFile(id: string): Promise<void> {
+    await this.getClient().files.delete(id);
   }
 
   async createResponse(body: ResponseCreateParamsNonStreaming): Promise<ResponseLike> {

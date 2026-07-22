@@ -11,17 +11,28 @@ import type { OpenAIAdapter, ResponseLike, UploadedFile } from "../src/types.js"
 
 class MockOpenAI implements OpenAIAdapter {
   uploads: string[] = [];
+  uploadNames: string[] = [];
+  deletedFileIds: string[] = [];
   createdBodies: ResponseCreateParamsNonStreaming[] = [];
   retrieveQueue: ResponseLike[] = [];
   cancelResponseValue: ResponseLike = { id: "resp_mock", status: "cancelled" };
+  failUploadsMatching: RegExp | null = null;
 
-  async uploadFile(filePath: string): Promise<UploadedFile> {
+  async uploadFile(filePath: string, uploadName: string): Promise<UploadedFile> {
+    if (this.failUploadsMatching?.test(filePath)) {
+      throw new Error(`upload failed for ${path.basename(filePath)}`);
+    }
     this.uploads.push(filePath);
+    this.uploadNames.push(uploadName);
     return {
       id: `file_${this.uploads.length}`,
-      filename: path.basename(filePath),
+      filename: uploadName,
       bytes: 12
     };
+  }
+
+  async deleteFile(id: string): Promise<void> {
+    this.deletedFileIds.push(id);
   }
 
   async createResponse(body: ResponseCreateParamsNonStreaming): Promise<ResponseLike> {

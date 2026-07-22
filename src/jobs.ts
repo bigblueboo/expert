@@ -18,6 +18,7 @@ const skippedFileSchema = z.object({
 });
 
 const jobRecordSchema: z.ZodType<JobRecord> = z.object({
+  schemaVersion: z.number().optional(),
   jobId: z.string(),
   responseId: z.string(),
   model: z.string(),
@@ -46,6 +47,7 @@ export class JobStore {
     const now = new Date().toISOString();
     const job: JobRecord = {
       ...record,
+      schemaVersion: 1,
       jobId: `job_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`,
       createdAt: now,
       updatedAt: now
@@ -55,11 +57,12 @@ export class JobStore {
   }
 
   async save(record: JobRecord): Promise<void> {
-    await mkdir(this.jobsDir, { recursive: true });
+    // Records contain full prompts and stdin content; keep them private.
+    await mkdir(this.jobsDir, { recursive: true, mode: 0o700 });
     const updated: JobRecord = { ...record, updatedAt: new Date().toISOString() };
     const target = this.pathForJob(updated.jobId);
     const temp = `${target}.tmp`;
-    await writeFile(temp, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+    await writeFile(temp, `${JSON.stringify(updated, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     await rename(temp, target);
   }
 
@@ -75,24 +78,37 @@ export class JobStore {
   }
 
   private async findByResponseId(responseId: string): Promise<JobRecord | null> {
+    let entries: string[];
     try {
-      const entries = await readdir(this.jobsDir);
-      for (const entry of entries) {
-        if (!entry.endsWith(".json")) continue;
+      entries = await readdir(this.jobsDir);
+    } catch {
+      return null;
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      // A single corrupt record must not abort the search.
+      try {
         const raw = await readFile(path.join(this.jobsDir, entry), "utf8");
         const parsed = jobRecordSchema.safeParse(JSON.parse(raw));
         if (parsed.success && parsed.data.responseId === responseId) {
           return parsed.data;
         }
+      } catch {
+        continue;
       }
-    } catch {
-      return null;
     }
     return null;
   }
 
   private pathForJob(jobId: string): string {
-    return path.join(this.jobsDir, `${jobId}.json`);
+    if (!/^[A-Za-z0-9_-]+$/.test(jobId)) {
+      throw new Error(`Invalid job id: ${jobId}`);
+    }
+    const target = path.join(this.jobsDir, `${jobId}.json`);
+    if (path.dirname(target) !== this.jobsDir) {
+      throw new Error(`Invalid job id: ${jobId}`);
+    }
+    return target;
   }
 }
 
