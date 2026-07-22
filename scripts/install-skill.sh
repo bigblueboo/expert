@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Install the Codex skill from this local checkout into ${CODEX_HOME:-~/.codex}/skills.
+# Install the skill from this local checkout into ${AGENTS_HOME:-~/.agents}/skills,
+# then symlink the Claude (~/.claude/skills) and Codex (${CODEX_HOME:-~/.codex}/skills)
+# entries to that canonical copy.
 set -euo pipefail
 
 usage() {
@@ -17,24 +19,49 @@ esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src="$repo_root/skills/expert"
-dest_root="${CODEX_HOME:-$HOME/.codex}/skills"
-dest="$dest_root/expert"
+canonical_root="${AGENTS_HOME:-$HOME/.agents}/skills"
+canonical="$canonical_root/expert"
 
 if [[ ! -f "$src/SKILL.md" ]]; then
   echo "Skill source not found at $src" >&2
   exit 1
 fi
 
-if [[ -e "$dest" ]]; then
+if [[ -e "$canonical" || -L "$canonical" ]]; then
   if [[ "$force" -ne 1 ]]; then
-    echo "Destination already exists: $dest (use --force to replace)" >&2
+    echo "Destination already exists: $canonical (use --force to replace)" >&2
     exit 1
   fi
-  rm -rf "$dest"
+  rm -rf "$canonical"
 fi
 
-mkdir -p "$dest_root"
-cp -R "$src" "$dest"
+mkdir -p "$canonical_root"
+cp -R "$src" "$canonical"
+echo "Installed expert to $canonical"
 
-echo "Installed expert to $dest"
-echo "Restart Codex to pick up the skill."
+link_skill() {
+  local link_root="$1"
+  local link="$link_root/expert"
+
+  if [[ -L "$link" && "$(readlink "$link")" == "$canonical" ]]; then
+    echo "Link already in place: $link"
+    return
+  fi
+
+  if [[ -e "$link" || -L "$link" ]]; then
+    if [[ "$force" -ne 1 ]]; then
+      echo "Destination already exists: $link (use --force to replace)" >&2
+      exit 1
+    fi
+    rm -rf "$link"
+  fi
+
+  mkdir -p "$link_root"
+  ln -s "$canonical" "$link"
+  echo "Linked $link -> $canonical"
+}
+
+link_skill "$HOME/.claude/skills"
+link_skill "${CODEX_HOME:-$HOME/.codex}/skills"
+
+echo "Restart Claude Code / Codex to pick up the skill."

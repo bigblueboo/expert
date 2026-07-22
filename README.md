@@ -44,7 +44,7 @@ Or, if you've cloned this repo locally, install the skill from the checkout:
 
 Pass `--force` to replace an already-installed copy of the skill.
 
-Restart Codex after installing the skill. The skill is installed into `${CODEX_HOME:-~/.codex}/skills/expert`.
+Restart Codex (or Claude Code) after installing the skill. The install script places the skill in `${AGENTS_HOME:-~/.agents}/skills/expert` and symlinks `~/.claude/skills/expert` and `${CODEX_HOME:-~/.codex}/skills/expert` to it, so both tools share one copy.
 
 ## Usage
 
