@@ -64,6 +64,7 @@ By default `ask` uses:
 - `store: true`
 - a 60 minute polling timeout
 - a 5 second polling interval
+- a 900,000-token cap on estimated input (`--max-context-tokens`)
 
 Interrupted jobs keep running server-side. Resume with the command printed on interrupt:
 
@@ -80,6 +81,10 @@ expert ask "Check context" --file package.json --file "src/**/*.ts" --file "test
 ```
 
 Job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set. Records contain the full prompt and context manifest and are written with `0600` permissions.
+
+## Context budget
+
+GPT-5.6 has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). The CLI estimates input at ~4 characters per token and refuses to send when the estimate exceeds `--max-context-tokens` (default 900,000, leaving headroom for reasoning and output). Dry runs report `estimated_input_tokens` (and per-file `estimated_tokens` under `--format json`) instead of failing, so use them to trim oversized attachment lists. Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1.5x output for the entire request; the CLI warns before sending one. Estimates are unreliable for PDFs and other rich formats — leave extra headroom.
 
 ## Context selection notes
 

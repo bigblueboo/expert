@@ -62,6 +62,7 @@ export interface ContextBundle {
   skipped: SkippedContextFile[];
   manifest: string;
   totalBytes: number;
+  estimatedTokens: number;
 }
 
 export interface JobRecord {

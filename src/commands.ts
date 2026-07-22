@@ -1,12 +1,15 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { JobRecord, JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ReasoningMode, ResponseLike } from "./types.js";
-import { resolveContext, readStdinIfRequested, stableContextHash } from "./context.js";
+import { estimateTokens, resolveContext, readStdinIfRequested, stableContextHash } from "./context.js";
 import {
+  DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_MODEL,
   DEFAULT_POLL_INTERVAL,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_TIMEOUT,
+  MODEL_CONTEXT_WINDOW_TOKENS,
+  PRICING_SURCHARGE_INPUT_TOKENS,
   defaultReasoningMode
 } from "./defaults.js";
 import { JobStore, updateJobFromResponse } from "./jobs.js";
@@ -37,6 +40,7 @@ export interface AskOptions {
   format?: OutputFormat;
   output?: string;
   maxOutputTokens?: number;
+  maxContextTokens?: number;
   cancelOnInterrupt?: boolean;
   registerSignals?: boolean;
 }
@@ -74,6 +78,15 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     excludes: options.exclude ?? []
   });
 
+  const maxContextTokens = options.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
+  const estimatedInputTokens =
+    context.estimatedTokens + estimateTokens(Buffer.byteLength(prompt)) + estimateTokens(Buffer.byteLength(stdinText));
+  const overCapMessage =
+    `Estimated input is ~${estimatedInputTokens.toLocaleString("en-US")} tokens, above the ` +
+    `--max-context-tokens cap of ${maxContextTokens.toLocaleString("en-US")} ` +
+    `(the model's context window is ${MODEL_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US")} tokens, shared with reasoning and output). ` +
+    `Narrow the attached context; use --dry-run --format json to see per-file estimates.`;
+
   if (options.dryRun) {
     if (format === "json") {
       const payload = {
@@ -83,9 +96,12 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
         prompt,
         stdin_bytes: Buffer.byteLength(stdinText),
         context_hash: await stableContextHash(context),
+        estimated_input_tokens: estimatedInputTokens,
+        max_context_tokens: maxContextTokens,
         files: context.files.map((file) => ({
           path: file.relativePath,
           bytes: file.bytes,
+          estimated_tokens: estimateTokens(file.bytes),
           mime_type: file.mimeType
         })),
         skipped_files: context.skipped,
@@ -94,8 +110,24 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
       deps.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     } else {
       deps.stdout.write(`${context.manifest}\n`);
+      deps.stdout.write(`Estimated input tokens: ~${estimatedInputTokens.toLocaleString("en-US")}\n`);
+    }
+    // Dry runs are the diagnostic tool, so report the violation without failing.
+    if (estimatedInputTokens > maxContextTokens) {
+      deps.stderr.write(`Warning: ${overCapMessage}\n`);
     }
     return 0;
+  }
+
+  if (estimatedInputTokens > maxContextTokens) {
+    throw new Error(overCapMessage);
+  }
+  if (estimatedInputTokens > PRICING_SURCHARGE_INPUT_TOKENS) {
+    deps.stderr.write(
+      `Warning: estimated input (~${estimatedInputTokens.toLocaleString("en-US")} tokens) exceeds ` +
+      `${PRICING_SURCHARGE_INPUT_TOKENS.toLocaleString("en-US")}; OpenAI bills such requests at 2x input / 1.5x output ` +
+      `for the entire request.\n`
+    );
   }
 
   const prepared = await prepareConsultationRequest(deps.api, {

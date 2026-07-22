@@ -141,11 +141,62 @@ describe("ask command", () => {
     expect(code).toBe(0);
     expect(api.uploads).toHaveLength(0);
     expect(api.createdBodies).toHaveLength(0);
-    expect(JSON.parse(outputOf(deps.stdout))).toMatchObject({
+    const payload = JSON.parse(outputOf(deps.stdout));
+    expect(payload).toMatchObject({
       model: "gpt-5.6",
       reasoning_mode: "pro",
       files: [{ path: "notes.md" }]
     });
+    expect(payload.estimated_input_tokens).toBeGreaterThan(0);
+    expect(payload.files[0].estimated_tokens).toBeGreaterThan(0);
+  });
+
+  it("refuses to send context estimated above the token cap", async () => {
+    const cwd = await tempDir();
+    await writeFile(path.join(cwd, "big.md"), "x".repeat(4_000), "utf8");
+    const api = new MockOpenAI();
+    const deps = depsFor(cwd, api);
+
+    await expect(
+      runAsk(["Review"], { file: ["big.md"], maxContextTokens: 100, registerSignals: false }, deps)
+    ).rejects.toThrow(/above the --max-context-tokens cap/);
+    expect(api.uploads).toHaveLength(0);
+    expect(api.createdBodies).toHaveLength(0);
+  });
+
+  it("reports a cap violation as a warning on dry runs instead of failing", async () => {
+    const cwd = await tempDir();
+    await writeFile(path.join(cwd, "big.md"), "x".repeat(4_000), "utf8");
+    const deps = depsFor(cwd, new MockOpenAI());
+
+    const code = await runAsk(["Review"], {
+      file: ["big.md"],
+      dryRun: true,
+      maxContextTokens: 100,
+      registerSignals: false
+    }, deps);
+
+    expect(code).toBe(0);
+    expect(outputOf(deps.stderr)).toContain("above the --max-context-tokens cap");
+  });
+
+  it("warns when estimated input crosses the pricing surcharge threshold", async () => {
+    const cwd = await tempDir();
+    // ~1.2MB => ~300K estimated tokens: above the 272K surcharge, below the cap.
+    await writeFile(path.join(cwd, "big.md"), "x".repeat(1_200_000), "utf8");
+    const api = new MockOpenAI();
+    api.retrieveQueue = [{ id: "resp_mock", status: "completed", output_text: "ok" }];
+    const deps = depsFor(cwd, api);
+
+    const code = await runAsk(["Review"], {
+      file: ["big.md"],
+      timeout: "1s",
+      pollInterval: "1ms",
+      registerSignals: false
+    }, deps);
+
+    expect(code).toBe(0);
+    expect(outputOf(deps.stderr)).toContain("2x input / 1.5x output");
   });
 });
 

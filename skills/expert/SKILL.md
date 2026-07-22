@@ -39,11 +39,13 @@ node dist/cli.js ask "Review this implementation for correctness and missing tes
    - Ask for actionable findings, risks, and concrete next steps.
    - For review requests, ask for prioritized bugs and missing tests before summary.
 
-4. Run a dry run for broad context.
+4. Run a dry run for broad context and check the token estimate.
 
 ```sh
 expert ask "Check whether this refactor is safe." --file package.json --file "src/**/*.ts" --file "test/**/*.ts" --dry-run --format json
 ```
+
+Check `estimated_input_tokens` in the output before sending. Trim the attachment list if it approaches the model's capacity (see Context Budget below).
 
 5. Run the consult and wait for the answer.
 
@@ -83,6 +85,15 @@ Tune blocking behavior only when needed:
 expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout 60m --poll-interval 5s
 ```
 
+## Context Budget
+
+GPT-5.6 Pro has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). Do not exceed it:
+
+- The CLI estimates input size (~4 characters per token) and refuses to send when the estimate exceeds 900,000 tokens. Prefer trimming the attachment list over raising `--max-context-tokens`.
+- Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1.5x output for the entire request. Stay below that unless the extra context clearly earns its cost; the CLI warns when a consult crosses it.
+- Byte-based estimates are unreliable for PDFs and other rich formats; leave extra headroom when attaching them.
+- When context is too large, split the question into multiple focused consults instead of one oversized one, and summarize earlier answers in follow-up prompts.
+
 ## Context Selection Guidance
 
 - Include entrypoints, changed files, nearby tests, relevant configs, schemas, docs, and error logs.
@@ -100,4 +111,4 @@ expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout
 
 ## Defaults
 
-The CLI defaults to `gpt-5.6` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, and a 5 second polling interval. `reasoning.mode` defaults to `pro` for GPT-5.6 models (GPT-5.6 Pro) and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+The CLI defaults to `gpt-5.6` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-5.6 models (GPT-5.6 Pro) and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.

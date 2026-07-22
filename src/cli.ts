@@ -5,11 +5,13 @@ import { pathToFileURL } from "node:url";
 import { Command, Option } from "commander";
 import { runAsk, runCancel, runResume, runStatus } from "./commands.js";
 import {
+  DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_MODEL,
   DEFAULT_MODEL_DISPLAY_NAME,
   DEFAULT_POLL_INTERVAL,
   DEFAULT_REASONING_EFFORT,
-  DEFAULT_TIMEOUT
+  DEFAULT_TIMEOUT,
+  MODEL_CONTEXT_WINDOW_TOKENS
 } from "./defaults.js";
 import { defaultExpertHome, JobStore } from "./jobs.js";
 import { OpenAISdkAdapter } from "./openai-adapter.js";
@@ -46,6 +48,12 @@ export function createProgram(): Command {
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))
     .option("-o, --output <path>", "Write final answer to a file.")
     .option("--max-output-tokens <n>", "Maximum output tokens.", parseInteger)
+    .option(
+      "--max-context-tokens <n>",
+      `Refuse to send when estimated input tokens exceed this (model window: ${MODEL_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US")}).`,
+      parseInteger,
+      DEFAULT_MAX_CONTEXT_TOKENS
+    )
     .option("--cancel-on-interrupt", "Cancel the background response on Ctrl-C.")
     .action(async (prompt: string[], opts) => {
       await runWithDeps((deps) =>

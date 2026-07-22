@@ -163,8 +163,15 @@ export async function resolveContext(options: ResolveContextOptions): Promise<Co
     files,
     skipped,
     totalBytes,
+    estimatedTokens: estimateTokens(totalBytes),
     manifest: buildManifest(files, skipped)
   };
+}
+
+// Rough ~4 chars/token heuristic. Good enough for source and prose; rich
+// formats like PDF can tokenize very differently from their byte size.
+export function estimateTokens(bytes: number): number {
+  return Math.ceil(bytes / 4);
 }
 
 export async function readStdinIfRequested(enabled: boolean, maxBytes = DEFAULT_MAX_STDIN_BYTES): Promise<string> {
