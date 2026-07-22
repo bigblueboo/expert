@@ -32,16 +32,17 @@ Install the Codex skill globally from GitHub:
 
 ```sh
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo <owner>/<repo> \
+  --repo bigblueboo/expert \
   --path skills/expert
 ```
 
-Or install from a GitHub URL:
+Or, if you've cloned this repo locally, install the skill from the checkout:
 
 ```sh
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --url https://github.com/<owner>/<repo>/tree/main/skills/expert
+./scripts/install-skill.sh
 ```
+
+Pass `--force` to replace an already-installed copy of the skill.
 
 Restart Codex after installing the skill. The skill is installed into `${CODEX_HOME:-~/.codex}/skills/expert`.
 
