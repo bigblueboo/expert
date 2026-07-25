@@ -6,7 +6,7 @@
 
 `expert` asks GPT-5.6 Pro for a second opinion, with real files from your repo attached. You name the files; it uploads them, starts a background job on the OpenAI Responses API, and polls until the answer comes back. Pro consults can take a while — the default timeout is 6 hours (`--timeout` to change it). Every consult gets a local job record, so if your terminal dies mid-wait you can pick the job back up with `expert resume`.
 
-The repo also includes an [agent skill](skills/expert/SKILL.md) that teaches Claude Code, Codex, and other coding agents when to reach for the CLI.
+The repo also includes two agent skills. [expert](skills/expert/SKILL.md) teaches Claude Code, Codex, and other coding agents when to reach for the CLI. [thermo-nuclear-expert-review](skills/thermo-nuclear-expert-review/SKILL.md) uses it for an ultra-strict structural code review: the diff, a demanding review charter, and as much of your repo as the token budget allows all go to GPT-5.6 Pro in one consult. Its standards are adapted from the Cursor team's thermo-nuclear-code-quality-review skill.
 
 If you know [Oracle](https://github.com/steipete/oracle), this covers similar ground. Oracle can drive ChatGPT Pro through a browser session so subscribers don't need an API key; `expert` stays on the API. One engine, fewer moving parts.
 
@@ -83,6 +83,16 @@ expert ask "Check context" --file package.json --file "src/**/*.ts" --file "test
 
 Job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set. Records contain the full prompt and context manifest and are written with `0600` permissions.
 
+## The review skill
+
+The second skill, `thermo-nuclear-expert-review`, never fires on its own — its frontmatter sets `disable-model-invocation`, and your agent runs it only when you ask by name ("run a thermo-nuclear review of this branch").
+
+It diffs your branch against the default branch, uncommitted work included, then assembles the largest repo snapshot the token budget allows. Changed files go in whole, along with their tests, the files that import them, each package's shared utility modules, and the configs that define your conventions. If a dry run estimates the whole source tree under 272,000 tokens, the whole tree goes. Everything reaches GPT-5.6 Pro in a single consult: the charter and diff on stdin, the sources as attachments.
+
+The charter (`skills/thermo-nuclear-expert-review/charter.md`) sets the standards. The verdict comes back as `APPROVE`, `NEEDS RESTRUCTURING`, or `INSUFFICIENT CONTEXT`, with each finding tied to a file and line and marked `BLOCKER` or `RECOMMENDED`. Some things are presumptive blockers: pushing a file past 1,000 lines, duplicating a helper that already has a canonical home, adding branching that tangles an existing flow. Before relaying the review, the agent is instructed to check every claim against the repo and drop findings that don't hold up.
+
+Expect a consult like this to spend real tokens and real time. Attaching half the repo and waiting on a Pro-grade answer is the point.
+
 ## Context budget
 
 GPT-5.6 has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). The CLI estimates input at ~4 characters per token and refuses to send when the estimate exceeds `--max-context-tokens`. The default cap is 900,000; the rest of the window is headroom for reasoning and output. Dry runs report `estimated_input_tokens` (and per-file `estimated_tokens` under `--format json`) instead of failing. Use them to trim an oversized attachment list.
@@ -105,13 +115,19 @@ Attached files are uploaded to the OpenAI Files API with `purpose: "user_data"`,
 ## Skill layout
 
 ```text
-skills/expert/
-├── SKILL.md
-└── agents/
-    └── openai.yaml
+skills/
+├── expert/
+│   ├── SKILL.md
+│   └── agents/
+│       └── openai.yaml
+└── thermo-nuclear-expert-review/
+    ├── SKILL.md
+    ├── charter.md          # the review standards, piped to the model
+    └── agents/
+        └── openai.yaml
 ```
 
-The skill prefers an `expert` binary on `PATH` and falls back to `npx -y @bigblueboo/expert`. Either way `OPENAI_API_KEY` has to be set.
+Both skills prefer an `expert` binary on `PATH` and fall back to `npx -y @bigblueboo/expert`. Either way `OPENAI_API_KEY` has to be set.
 
 ## Development
 
