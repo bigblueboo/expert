@@ -7,107 +7,112 @@ disable-model-invocation: true
 # Thermo-Nuclear Expert Review
 
 Delegate an ultra-strict structural code review to GPT-5.6 Pro through the `expert`
-CLI. The review standards live in `charter.md`, which sits next to this SKILL.md; the
-charter is piped to the model along with the diff, and the repository sources are
-attached as files. Your job is to assemble the richest context the budget allows, run
-one high-quality consult, verify what comes back, and deliver the verdict.
+CLI. The review standards live in `charter.md` next to this SKILL.md, and the whole
+consult runs through the bundled `scripts/run-review.sh`, which pins the diff
+(tracked *and* untracked files), builds the charter+diff prompt, budget-checks the
+exact request with a dry run, and only then spends tokens. Your job is to choose the
+extra context, run the script, verify what comes back, and deliver the verdict.
 
 The charter demands judgments a bare diff cannot support — "reuse the canonical
 helper", "is this logic in the right layer", "is there a code-judo move that deletes
-this complexity". Those calls require seeing the code *around* the change. Attaching
-generous context is the whole point of running this review through `expert`; when in
-doubt, attach more.
+this complexity". Those calls require seeing the code *around* the change, so attach
+generous context; when in doubt, attach more.
 
-Requires `OPENAI_API_KEY`. Prefer `expert` on `PATH`; otherwise use
-`npx -y @bigblueboo/expert`. The consult spends real tokens and can block for a long
-time (default timeout 6 hours) — that is expected and acceptable for this review.
+## Before you run it
 
-## Step 1 — Pin down the diff under review
+- Needs `OPENAI_API_KEY`. The script prefers `expert` on `PATH` and falls back to
+  `npx -y @bigblueboo/expert` on its own.
+- The consult spends real tokens and can block for hours (default timeout 6h). That
+  is expected for this review.
+- Everything attached is uploaded to the OpenAI Files API and stored in that OpenAI
+  account until deleted there. Do not run this when the user forbids external API
+  calls, and never attach secrets or customer data. If `OPENAI_BASE_URL` is set to
+  something unexpected, stop and ask — it redirects the key and all uploads.
 
-Default to the current branch's full delta against the default branch, including
-uncommitted work:
+## Step 1 — Pin the scope
 
-```sh
-base=$(git merge-base HEAD origin/main)   # or origin/master
-git diff "$base" --stat                   # sanity-check the scope
-git diff "$base" --name-only              # the changed-file list, used below
-```
+By default the script reviews the working tree against the merge-base with the
+repository's default branch, untracked files included. Pass `--base <ref>` to diff
+against something else.
 
-If the user asked to review something narrower (staged changes, one commit, a PR),
-substitute the appropriate diff and keep the rest of the workflow the same.
+The script always reviews the working tree as it stands. To review a single commit,
+staged-only changes, or a PR head, check that state out cleanly first — reviewing a
+dirty tree against a narrower target would attach code the diff does not contain.
 
-## Step 2 — Assemble maximal context
+## Step 2 — Choose the extra context
 
-Build the attachment list in this priority order:
+Changed files are always attached in full, and the prompt carries the diffstat and
+per-file line counts the charter's 1000-line rule needs. Beyond that, pass
+`--attach` (repeatable; files, globs, or directories) in this priority order:
 
-1. Full current contents of every changed file (not just the diff hunks).
-2. The tests for those files.
-3. First-degree neighbors: files that import the changed files or are imported by
+1. The tests for the changed files.
+2. First-degree neighbors: files that import the changed files or are imported by
    them. Find importers with `grep -rl` on the changed modules' names.
-4. The shared/canonical utility modules of every package the diff touches — the
+3. The shared/canonical utility modules of every package the diff touches — the
    charter requires citing canonical helpers, so the model has to see them.
-5. Manifests and configs that define conventions: `package.json`, `tsconfig.json`,
-   lockfile excerpts, lint configs, or their equivalents.
+4. Manifests and configs that define conventions: `package.json`, `tsconfig.json`,
+   lint configs, or their equivalents.
+5. If the source tree is small and coherent, the whole tree — full-repo visibility
+   is what lets the reviewer catch wrong-layer and duplicate-helper problems. It
+   still bills every input token; what staying under 272,000 tokens avoids is the
+   2x input / 1.5x output long-context multiplier, which the script enforces.
 
-Then try to do better than the priority list: attach the whole source tree if it
-fits. Run a dry run to measure:
+Check the budget with the script's dry run, which measures the exact final request
+(charter, diff, and all attachments included):
 
 ```sh
-expert ask "budget check" --dir src --dir test --file package.json \
-  --exclude "dist/**" --exclude "**/*.snap" --dry-run --format json
+"$SKILL_DIR"/scripts/run-review.sh --attach "src/**/*.ts" --attach package.json --dry-run
 ```
 
-Read `estimated_input_tokens` from the output:
+`$SKILL_DIR` here means the directory containing this SKILL.md — substitute the
+real path. If the estimate crosses 272k, the script stops; rerun with `--yes` only
+when the extra context genuinely earns the surcharge (large diff, heavy
+cross-package coupling). If it exceeds the 900k cap, trim `--attach` entries or
+split the review by subsystem — and if you split, either deliver per-subsystem
+verdicts labeled as such or run a final synthesis consult over the combined
+findings; do not merge them into one global verdict by hand.
 
-- **Under 272,000**: attach the whole tree. Full-repo visibility materially improves
-  this review and costs nothing extra.
-- **Over 272,000**: OpenAI bills the entire request at 2x input / 1.5x output past
-  that line. Cross it only when the repo-wide context genuinely earns the surcharge
-  (large diff, heavy cross-package coupling); otherwise trim back to the priority
-  list above, dropping from the bottom.
-- **Near the 900,000 cap**: the CLI refuses to send. Trim until the dry run fits,
-  splitting the review by package or subsystem if a single consult cannot hold it.
-
-Never attach secrets, vendored dependencies, build output, or generated artifacts.
-The CLI's safety excludes handle the obvious cases; add `--exclude` for the rest.
+The script excludes `**/dist/**`, `**/build/**`, `**/coverage/**`, and
+`**/node_modules/**` everywhere in the tree; add `--exclude` for other generated
+artifacts. Never attach secrets — the CLI's safety excludes cover the obvious
+cases.
 
 ## Step 3 — Run the consult
 
-Pipe the charter and the diff through stdin; attach the sources as files. With
-`$SKILL_DIR` as the directory containing this SKILL.md:
-
 ```sh
-{
-  cat "$SKILL_DIR/charter.md"
-  echo
-  echo "=== DIFF UNDER REVIEW (merge-base -> working tree) ==="
-  git diff "$base"
-} | expert ask "Perform the thermo-nuclear code quality review defined by the charter in stdin. The diff under review follows the charter in stdin. The attached files are full current sources for structural context. Follow the charter's Output Contract exactly." \
-  --stdin \
-  --dir src --dir test \
-  --file package.json \
-  --exclude "dist/**"
+"$SKILL_DIR"/scripts/run-review.sh \
+  --attach "src/**/*.ts" --attach "test/**/*.ts" --attach package.json \
+  --output review.md
 ```
 
-Adjust `--dir`/`--file`/`--exclude` to match the attachment list from Step 2. Add
-`-o review.md` if the user wants the raw review kept. If the consult is interrupted,
-run the `expert resume <job_id>` command it prints; if it exits with code 124, the
-job is still running — resume it, with a larger `--timeout` if needed.
+The script aborts before spending anything if the charter, diff, or budget check
+fails. If the consult is interrupted, run the `expert resume <job_id>` command it
+prints; exit code 124 means local polling timed out while the job kept running —
+resume it, with a larger `--timeout` if needed.
 
-If the verdict is `INSUFFICIENT CONTEXT`, attach exactly the files it names, prepend
-a one-paragraph summary of the first round to the prompt, and consult again.
+If the verdict is `INSUFFICIENT CONTEXT`: write a short summary of round one to a
+file, then rerun the script once with `--note <that-file>` plus `--attach` for
+exactly the files the reviewer named. The script resends the full charter and the
+same diff automatically — a second consult shares no state with the first, so
+nothing may be abbreviated. One retry only; if context is still insufficient,
+deliver the scoped verdict and name the unresolved gaps.
 
 ## Step 4 — Verify, then deliver
 
 The review is expert input, not automatic truth. Before relaying or acting on it:
 
-- Verify every structural claim against the repo: cited helpers exist, cited
-  file:line references are real, a proposed code-judo reframe actually preserves
-  behavior given code the model may not have seen.
-- Drop findings that do not survive verification, and say you dropped them.
-- Keep the charter's priority order and the `BLOCKER` / `RECOMMENDED` marks.
-- Lead with the verdict. If it is `NEEDS RESTRUCTURING`, present the blockers as the
-  work list; do not soften them into optional suggestions.
+- Verify every finding against the repo: cited helpers exist, cited code references
+  are real, a proposed code-judo reframe actually preserves behavior given code the
+  model may not have seen. Run the typecheck or tests when a claim depends on
+  behavior being preserved; if you cannot check it, label the claim unverified
+  rather than dropping or endorsing it.
+- Drop findings that fail verification, and say you dropped them.
+- Then recompute the verdict from the surviving findings under the charter's own
+  rules. Report both: the reviewer's raw verdict and your verified verdict. A
+  `NEEDS RESTRUCTURING` built on a disproven blocker becomes an `APPROVE`; say so
+  plainly.
+- Keep the charter's priority order and the `BLOCKER` / `RECOMMENDED` marks, and
+  relay the reviewer's scope-and-gaps section with the verdict.
 - Only start implementing remedies if the user asked for fixes, not just the review.
 
 ---

@@ -1,4 +1,4 @@
 interface:
   display_name: "Thermo-Nuclear Expert Review"
   short_description: "Ultra-strict structural code review via GPT-5.6 Pro."
-  default_prompt: "Run the thermo-nuclear expert review on the current branch's changes with maximal repository context attached."
+  default_prompt: "Run the thermo-nuclear expert review on the current branch's changes with maximal relevant context within the token budget."
