@@ -273,7 +273,29 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
         if (outcome.response) {
           await saveUpdatedRecord(ref, outcome.response, deps);
         }
-        deps.stderr.write(`Timed out after ${formatElapsed(timeoutMs)}. Resume with: expert resume ${displayId(ref)}\n`);
+        const lastStatus = outcome.response
+          ? normalizeStatus(outcome.response.status)
+          : ref.record?.status ?? "unknown";
+        // Mark the local record so `~/.expert/jobs` shows why polling stopped;
+        // `expert status`/`resume` will refresh it from the server.
+        if (ref.record) {
+          await trySaveRecord({ ...ref.record, status: "timeout" }, deps);
+        }
+        if (options.format === "json") {
+          const payload = {
+            ...responsePayload(ref, outcome.response ?? { id: ref.responseId, status: lastStatus }),
+            timed_out: true,
+            timeout_ms: timeoutMs,
+            waited_ms: Date.now() - startedAt
+          };
+          deps.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+        }
+        deps.stderr.write(
+          `Timed out after ${formatElapsed(timeoutMs)} waiting for ${displayId(ref)} (${ref.responseId}); last status: ${lastStatus}.\n` +
+          `The response is still running server-side; nothing was cancelled.\n` +
+          `Resume with: expert resume ${displayId(ref)}\n` +
+          `Allow more time with --timeout, e.g.: expert resume ${displayId(ref)} --timeout 12h\n`
+        );
         return 124;
       }
       case "terminal": {

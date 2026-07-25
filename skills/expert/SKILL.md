@@ -1,6 +1,6 @@
 ---
 name: expert
-description: Consult GPT-5.6 Pro through the local `expert` CLI for second opinions on coding tasks. Use when Codex needs a high-quality external review, architecture/debugging help, test strategy feedback, implementation plan critique, or analysis of attached code/docs using explicit local files, directories, globs, or stdin. Especially useful for hard, ambiguous, high-risk, or long-running coding questions where blocking up to 60 minutes is acceptable.
+description: Consult GPT-5.6 Pro through the local `expert` CLI for second opinions on coding tasks. Use when the agent needs a high-quality external review, architecture/debugging help, test strategy feedback, implementation plan critique, or analysis of attached code/docs using explicit local files, directories, globs, or stdin. Especially useful for hard, ambiguous, high-risk, or long-running coding questions where a long blocking consult (up to 6 hours by default) is acceptable.
 ---
 
 # Expert
@@ -15,11 +15,10 @@ Prefer the installed binary when available:
 expert ask "Review this implementation for correctness and missing tests." --file src/foo.ts --file test/foo.test.ts
 ```
 
-If working inside this repository and `expert` is not on `PATH`, use the built CLI:
+If `expert` is not on `PATH`, run it via npx — no install required:
 
 ```sh
-npm run build
-node dist/cli.js ask "Review this implementation for correctness and missing tests." --file src/foo.ts --file test/foo.test.ts
+npx -y @bigblueboo/expert ask "Review this implementation for correctness and missing tests." --file src/foo.ts --file test/foo.test.ts
 ```
 
 ## Consultation Workflow
@@ -79,10 +78,10 @@ expert status <job_id>
 expert cancel <job_id>
 ```
 
-Tune blocking behavior only when needed:
+Tune blocking behavior only when needed (`--timeout` accepts `s`/`m`/`h`, default `360m`):
 
 ```sh
-expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout 60m --poll-interval 5s
+expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout 12h --poll-interval 5s
 ```
 
 ## Context Budget
@@ -108,7 +107,8 @@ GPT-5.6 Pro has a 1,050,000-token context window shared by input, reasoning, and
 - Verify concrete claims against the local repo before editing.
 - If the answer is incomplete or asks for more context, rerun `expert ask` with the missing files and summarize the previous response in the new prompt.
 - If the terminal is interrupted, preserve the printed `expert resume <job_id>` command.
+- If the consult exits with code 124, local polling timed out but the job is still running server-side; run the printed `expert resume <job_id>` command (add `--timeout 12h` to wait longer). Under `--format json`, a timeout emits the envelope with `timed_out: true`.
 
 ## Defaults
 
-The CLI defaults to `gpt-5.6` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 60 minute timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-5.6 models (GPT-5.6 Pro) and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+The CLI defaults to `gpt-5.6` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 360 minute (6 hour) timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-5.6 models (GPT-5.6 Pro) and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.

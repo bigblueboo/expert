@@ -198,6 +198,39 @@ describe("ask command", () => {
     expect(code).toBe(0);
     expect(outputOf(deps.stderr)).toContain("2x input / 1.5x output");
   });
+
+  it("reports clear timeout telemetry and preserves the resume handle", async () => {
+    const cwd = await tempDir();
+    await writeFile(path.join(cwd, "notes.md"), "context", "utf8");
+    const api = new MockOpenAI();
+    api.retrieveResponse = async (id: string) => ({ id, status: "in_progress" });
+    const deps = depsFor(cwd, api);
+
+    const code = await runAsk(["Slow question"], {
+      file: ["notes.md"],
+      timeout: "100ms",
+      pollInterval: "1ms",
+      format: "json",
+      registerSignals: false
+    }, deps);
+
+    expect(code).toBe(124);
+    const stderr = outputOf(deps.stderr);
+    expect(stderr).toContain("Timed out after");
+    expect(stderr).toContain("last status: in_progress");
+    expect(stderr).toContain("still running server-side");
+    expect(stderr).toMatch(/Resume with: expert resume job_/);
+    expect(stderr).toContain("--timeout");
+
+    const payload = JSON.parse(outputOf(deps.stdout));
+    expect(payload.timed_out).toBe(true);
+    expect(payload.status).toBe("in_progress");
+    expect(payload.timeout_ms).toBe(100);
+    expect(payload.waited_ms).toBeGreaterThanOrEqual(100);
+
+    const saved = JSON.parse(await readFile(path.join(deps.jobStore.jobsDir, `${payload.job_id}.json`), "utf8"));
+    expect(saved.status).toBe("timeout");
+  });
 });
 
 describe("job commands", () => {

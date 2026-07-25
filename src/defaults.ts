@@ -3,7 +3,9 @@ import type { ReasoningEffort, ReasoningMode } from "./types.js";
 export const DEFAULT_MODEL = "gpt-5.6";
 export const DEFAULT_MODEL_DISPLAY_NAME = "GPT-5.6 Pro";
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh";
-export const DEFAULT_TIMEOUT = "60m";
+// GPT Pro consults routinely run for hours; the timeout only bounds local
+// polling (the server-side job keeps running), so default generously.
+export const DEFAULT_TIMEOUT = "360m";
 export const DEFAULT_POLL_INTERVAL = "5s";
 
 // GPT-5.6 (and GPT-5.5 Pro) have a 1,050,000-token context window shared by

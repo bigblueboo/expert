@@ -1,7 +1,30 @@
 {
-  "name": "expert",
+  "name": "@bigblueboo/expert",
   "version": "0.1.0",
   "description": "A blocking GPT-5.6 Pro consultation CLI for agents.",
+  "license": "MIT",
+  "author": "Charles Deck",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bigblueboo/expert.git"
+  },
+  "homepage": "https://github.com/bigblueboo/expert#readme",
+  "bugs": {
+    "url": "https://github.com/bigblueboo/expert/issues"
+  },
+  "keywords": [
+    "cli",
+    "openai",
+    "gpt-5",
+    "gpt-5-pro",
+    "agent",
+    "agent-skill",
+    "skill",
+    "second-opinion",
+    "code-review",
+    "claude-code",
+    "codex"
+  ],
   "type": "module",
   "bin": {
     "expert": "./dist/cli.js"
@@ -9,8 +32,12 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "dev": "tsx src/cli.ts",
     "test": "npm run build && vitest run",
     "test:e2e": "npm run build && vitest run test/e2e.test.ts",

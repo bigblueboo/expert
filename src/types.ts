@@ -18,7 +18,7 @@ export const RESPONSE_STATUSES = [
 ] as const;
 export type ResponseStatus = (typeof RESPONSE_STATUSES)[number];
 
-export const JOB_STATUSES = [...RESPONSE_STATUSES, "interrupted", "error", "unknown"] as const;
+export const JOB_STATUSES = [...RESPONSE_STATUSES, "interrupted", "timeout", "error", "unknown"] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export interface ResponseLike {

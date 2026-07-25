@@ -1,50 +1,51 @@
 # expert
 
-`expert` is a TypeScript CLI for asking GPT-5.6 Pro for a long-running consultation with explicit local context. It uses the OpenAI Responses API in background mode, stores a local job record, polls until completion, and supports resume/status/cancel.
+[![CI](https://github.com/bigblueboo/expert/actions/workflows/ci.yml/badge.svg)](https://github.com/bigblueboo/expert/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/%40bigblueboo%2Fexpert)](https://www.npmjs.com/package/@bigblueboo/expert)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Local setup
+`expert` asks GPT-5.6 Pro for a second opinion, with real files from your repo attached. You name the files; it uploads them, starts a background job on the OpenAI Responses API, and polls until the answer comes back. Pro consults can take a while — the default timeout is 6 hours (`--timeout` to change it). Every consult gets a local job record, so if your terminal dies mid-wait you can pick the job back up with `expert resume`.
+
+The repo also includes an [agent skill](skills/expert/SKILL.md) that teaches Claude Code, Codex, and other coding agents when to reach for the CLI.
+
+If you know [Oracle](https://github.com/steipete/oracle), this covers similar ground. Oracle can drive ChatGPT Pro through a browser session so subscribers don't need an API key; `expert` stays on the API. One engine, fewer moving parts.
+
+## Quick start
+
+Requires Node >= 20 and an `OPENAI_API_KEY`:
 
 ```sh
-npm install
-npm run build
 export OPENAI_API_KEY=...
+npx -y @bigblueboo/expert ask "Review this implementation plan" --file README.md
 ```
 
-Run the local build with `node dist/cli.js`.
+## Install
 
-## Global install
+### Agent skill
 
-The CLI and the Codex skill are installed separately.
-
-Install the CLI globally from this repo:
+Install the skill with the [skills CLI](https://github.com/vercel-labs/skills):
 
 ```sh
-npm install -g .
+npx skills add bigblueboo/expert
 ```
 
-After the package is published, install it from npm instead:
+The skill calls the CLI through `npx -y @bigblueboo/expert`; there's nothing else to install. Set `OPENAI_API_KEY` wherever your agent runs, and restart the agent to pick up the skill.
+
+### CLI only
 
 ```sh
-npm install -g expert
+npm install -g @bigblueboo/expert
 ```
 
-Install the Codex skill globally from GitHub:
+### From a checkout
 
 ```sh
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo bigblueboo/expert \
-  --path skills/expert
-```
-
-Or, if you've cloned this repo locally, install the skill from the checkout:
-
-```sh
+npm install               # installs deps and builds dist/ via the prepare script
+npm install -g .          # optional: put `expert` on PATH
 ./scripts/install-skill.sh
 ```
 
-Pass `--force` to replace an already-installed copy of the skill.
-
-Restart Codex (or Claude Code) after installing the skill. The install script places the skill in `${AGENTS_HOME:-~/.agents}/skills/expert` and symlinks `~/.claude/skills/expert` and `${CODEX_HOME:-~/.codex}/skills/expert` to it, so both tools share one copy.
+`install-skill.sh` puts the skill in `${AGENTS_HOME:-~/.agents}/skills/expert` and symlinks `~/.claude/skills/expert` and `${CODEX_HOME:-~/.codex}/skills/expert` to it, so both tools share one copy. Pass `--force` to replace an existing install.
 
 ## Usage
 
@@ -62,11 +63,11 @@ By default `ask` uses:
 - `reasoning.effort: xhigh`
 - `background: true`
 - `store: true`
-- a 60 minute polling timeout
+- a 6 hour polling timeout (`--timeout` takes `s`/`m`/`h`, e.g. `--timeout 12h` or `--timeout 30m`)
 - a 5 second polling interval
 - a 900,000-token cap on estimated input (`--max-context-tokens`)
 
-Interrupted jobs keep running server-side. Resume with the command printed on interrupt:
+A timeout or Ctrl-C only stops the local polling. The job itself keeps running on OpenAI's side. When the timeout elapses, the CLI exits with code 124, marks the local job record `timeout`, and prints the last known status plus the exact `expert resume` command to run — add a bigger `--timeout` if six hours wasn't enough. Under `--format json` a timeout also writes the response envelope to stdout with `timed_out: true`, `timeout_ms`, and `waited_ms`, so a script can tell an aborted wait from an answer.
 
 ```sh
 expert resume <job_id>
@@ -84,7 +85,9 @@ Job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set. Recor
 
 ## Context budget
 
-GPT-5.6 has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). The CLI estimates input at ~4 characters per token and refuses to send when the estimate exceeds `--max-context-tokens` (default 900,000, leaving headroom for reasoning and output). Dry runs report `estimated_input_tokens` (and per-file `estimated_tokens` under `--format json`) instead of failing, so use them to trim oversized attachment lists. Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1.5x output for the entire request; the CLI warns before sending one. Estimates are unreliable for PDFs and other rich formats — leave extra headroom.
+GPT-5.6 has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). The CLI estimates input at ~4 characters per token and refuses to send when the estimate exceeds `--max-context-tokens`. The default cap is 900,000; the rest of the window is headroom for reasoning and output. Dry runs report `estimated_input_tokens` (and per-file `estimated_tokens` under `--format json`) instead of failing. Use them to trim an oversized attachment list.
+
+Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1.5x output for the entire request; the CLI warns before sending one. The ~4-chars-per-token estimate is also unreliable for PDFs and other rich formats. Leave extra headroom when attaching them.
 
 ## Context selection notes
 
@@ -95,12 +98,11 @@ GPT-5.6 has a 1,050,000-token context window shared by input, reasoning, and out
 
 ## Data handling
 
-- Attached files are uploaded to the OpenAI Files API with `purpose: "user_data"`, and responses are created with `store: true`. Uploaded files and stored responses persist in your OpenAI account until deleted there; the CLI only deletes uploads when a later upload in the same batch fails.
-- `OPENAI_BASE_URL` redirects all traffic — including your API key and uploaded file content — to the given host. It exists for testing against mock servers; treat it as security-sensitive.
+Attached files are uploaded to the OpenAI Files API with `purpose: "user_data"`, and responses are created with `store: true`. Uploaded files and stored responses stay in your OpenAI account until you delete them there; the CLI only deletes uploads when a later upload in the same batch fails.
+
+`OPENAI_BASE_URL` redirects all traffic — including your API key and uploaded file content — to the given host. It exists for testing against mock servers. Treat it as security-sensitive.
 
 ## Skill layout
-
-This repo includes the global-installable skill at:
 
 ```text
 skills/expert/
@@ -109,4 +111,16 @@ skills/expert/
     └── openai.yaml
 ```
 
-The skill teaches Codex when and how to use the `expert` CLI for GPT-5.6 Pro second opinions. It assumes the `expert` CLI is available on `PATH` and `OPENAI_API_KEY` is configured.
+The skill prefers an `expert` binary on `PATH` and falls back to `npx -y @bigblueboo/expert`. Either way `OPENAI_API_KEY` has to be set.
+
+## Development
+
+```sh
+npm install    # installs deps and builds via the prepare script
+npm test       # builds and runs the vitest suite (mock OpenAI server; no API key needed)
+npm run dev -- ask "Check context" --file package.json --dry-run
+```
+
+## License
+
+[MIT](LICENSE)
