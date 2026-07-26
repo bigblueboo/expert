@@ -27,7 +27,7 @@
   ],
   "type": "module",
   "bin": {
-    "expert": "./dist/cli.js"
+    "expert": "dist/cli.js"
   },
   "files": [
     "dist"
