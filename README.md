@@ -29,7 +29,7 @@ Install the skills with the [skills CLI](https://github.com/vercel-labs/skills):
 npx skills add bigblueboo/expert
 ```
 
-It discovers the skills in this repo's `skills/` directory and installs the ones you pick. The skills call the CLI through `npx -y @bigblueboo/expert`; there's nothing else to install. Set `OPENAI_API_KEY` wherever your agent runs, and restart the agent to pick up the skills.
+It finds what's in this repo's `skills/` directory and installs whichever ones you pick. Both call the CLI through `npx -y @bigblueboo/expert`; there's nothing else to install. Set `OPENAI_API_KEY` wherever your agent runs, then restart the agent.
 
 ### CLI only
 
@@ -45,7 +45,7 @@ npm install -g .          # optional: put `expert` on PATH
 ./scripts/install-skill.sh
 ```
 
-`install-skill.sh` installs every skill in `skills/` (or just the ones you name as arguments) into `${AGENTS_HOME:-~/.agents}/skills` and symlinks the `~/.claude/skills` and `${CODEX_HOME:-~/.codex}/skills` entries to those copies, so all tools share one copy per skill. It validates every destination before changing anything; pass `--force` to replace existing installs.
+`install-skill.sh` copies every skill in `skills/` — or just the ones you name as arguments — into `${AGENTS_HOME:-~/.agents}/skills`, then symlinks the `~/.claude/skills` and `${CODEX_HOME:-~/.codex}/skills` entries to those copies. Every tool shares one copy per skill. The script checks each destination before it touches anything; pass `--force` to replace existing installs.
 
 ## Usage
 
@@ -87,9 +87,9 @@ Job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set. Recor
 
 The second skill, `thermo-nuclear-expert-review`, never fires on its own — its frontmatter sets `disable-model-invocation`, and your agent runs it only when you ask by name ("run a thermo-nuclear review of this branch").
 
-It diffs your branch against the default branch, uncommitted and untracked work included, then assembles the largest repo snapshot the token budget allows. Changed files go in whole, along with their tests, the files that import them, each package's shared utility modules, and the configs that define your conventions. Small coherent repos send the whole source tree. A bundled script builds the request and budget-checks the exact consult it will send, stopping at the 272,000-token surcharge line unless told the context earns it. Everything reaches GPT-5.6 Pro in one consult — the charter and diff on stdin, the sources as attachments — with at most one follow-up if the reviewer names files it was missing.
+It diffs your branch against the default branch, uncommitted and untracked work included, then assembles the largest repo snapshot the token budget allows. Changed files go in whole, along with their tests, the files that import them, each package's shared utility modules, and the configs that define your conventions. For a small repo that can mean the entire source tree. A bundled script builds the request and budget-checks the exact consult it will send; it stops at the 272,000-token surcharge line unless you tell it the extra context earns the cost. Everything reaches GPT-5.6 Pro in one consult — the charter and diff on stdin, the sources as attachments — with at most one follow-up if the reviewer names files it was missing.
 
-The charter (`skills/thermo-nuclear-expert-review/charter.md`) sets the standards. The verdict comes back as `APPROVE`, `NEEDS RESTRUCTURING`, or `INSUFFICIENT CONTEXT`, with each finding tied to the code it concerns and marked `BLOCKER` or `RECOMMENDED`. Some things are presumptive blockers: pushing a file past 1,000 lines, duplicating a helper that already has a canonical home, adding branching that tangles an existing flow. Before relaying the review, the agent is instructed to check every claim against the repo and drop findings that don't hold up.
+The charter (`skills/thermo-nuclear-expert-review/charter.md`) sets the standards. The verdict comes back as `APPROVE`, `NEEDS RESTRUCTURING`, or `INSUFFICIENT CONTEXT`, with each finding tied to the code it concerns and marked `BLOCKER` or `RECOMMENDED`. Some things are presumptive blockers: pushing a file past 1,000 lines, duplicating a helper that already has a canonical home, or new branching that tangles an existing flow. Before relaying the review, the agent is instructed to check every claim against the repo and drop findings that don't hold up.
 
 Expect a consult like this to spend real tokens and real time. Attaching half the repo and waiting on a Pro-grade answer is the point.
 
