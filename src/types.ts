@@ -1,6 +1,6 @@
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 
-export const REASONING_EFFORTS = ["medium", "high", "xhigh", "max"] as const;
+export const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export const REASONING_MODES = ["standard", "pro"] as const;

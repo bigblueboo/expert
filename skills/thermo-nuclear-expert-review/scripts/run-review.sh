@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the thermo-nuclear expert review end to end: pin the diff (tracked and
 # untracked), build the charter+diff prompt, budget-check with a dry run of the
-# EXACT final request, then consult GPT-5.6 Pro through the expert CLI.
+# EXACT final request, then consult GPT-6 Astra in Pro mode through the expert CLI.
 #
 # The review covers the working tree as it stands. To review a single commit,
 # staged-only changes, or a PR head, check that state out cleanly first.
@@ -58,6 +58,9 @@ if command -v expert >/dev/null 2>&1; then
 else
   expert_cmd=(npx -y @bigblueboo/expert)
 fi
+
+# Pin the model and mode even when PATH or npx resolves an older CLI.
+model_args=(--model gpt-6-astra --reasoning-mode pro --reasoning xhigh)
 
 git rev-parse --show-toplevel >/dev/null 2>&1 || fail "not inside a git repository"
 [[ -n "$note_file" && ! -f "$note_file" ]] && fail "--note file not found: $note_file"
@@ -157,7 +160,7 @@ instruction="Perform the thermo-nuclear code quality review defined by the chart
 
 # Budget-check the EXACT final request: same prompt, same stdin, same attachments.
 estimate_json="$("${expert_cmd[@]}" ask "$instruction" --stdin \
-  "${file_args[@]}" --dry-run --format json <"$prompt_file")"
+  "${model_args[@]}" "${file_args[@]}" --dry-run --format json <"$prompt_file")"
 estimated_tokens="$(sed -n 's/.*"estimated_input_tokens": \([0-9][0-9]*\).*/\1/p' <<<"$estimate_json" | head -1)"
 [[ -n "$estimated_tokens" ]] || fail "could not parse estimated_input_tokens from dry run"
 
@@ -179,4 +182,4 @@ output_args=()
 [[ -n "$output_path" ]] && output_args=(-o "$output_path")
 
 "${expert_cmd[@]}" ask "$instruction" --stdin \
-  "${file_args[@]}" ${output_args[@]+"${output_args[@]}"} <"$prompt_file"
+  "${model_args[@]}" "${file_args[@]}" ${output_args[@]+"${output_args[@]}"} <"$prompt_file"

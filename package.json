@@ -1,7 +1,7 @@
 {
   "name": "@bigblueboo/expert",
   "version": "0.1.0",
-  "description": "A blocking GPT-5.6 Pro consultation CLI for agents.",
+  "description": "A blocking GPT-6 Astra consultation CLI for agents, using Pro reasoning mode.",
   "license": "MIT",
   "author": "Charles Deck",
   "repository": {
@@ -15,8 +15,8 @@
   "keywords": [
     "cli",
     "openai",
-    "gpt-5",
-    "gpt-5-pro",
+    "gpt-6-astra",
+    "pro-reasoning",
     "agent",
     "agent-skill",
     "skill",

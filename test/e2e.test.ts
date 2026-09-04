@@ -142,12 +142,14 @@ describe("CLI e2e", () => {
       response_id: "resp_e2e",
       status: "completed",
       output_text: "E2E final answer",
-      reasoning_effort: "xhigh"
+      model: "gpt-6-astra",
+      reasoning_effort: "xhigh",
+      reasoning_mode: "pro"
     });
 
     expect(server.createBodies).toHaveLength(1);
     expect(server.createBodies[0]).toMatchObject({
-      model: "gpt-5.6",
+      model: "gpt-6-astra",
       background: true,
       store: true,
       reasoning: { effort: "xhigh", mode: "pro" }
@@ -171,8 +173,40 @@ describe("CLI e2e", () => {
     const jobRecord = JSON.parse(await readFile(path.join(expertHome, "jobs", `${askJson.job_id}.json`), "utf8"));
     expect(jobRecord).toMatchObject({
       responseId: "resp_e2e",
+      model: "gpt-6-astra",
       reasoningEffort: "xhigh",
+      reasoningMode: "pro",
       status: "cancelled"
+    });
+  });
+
+  it.each([
+    ["low", "standard", { effort: "low" }],
+    ["max", "pro", { effort: "max", mode: "pro" }]
+  ])("sends and reloads Astra with %s effort in %s mode", { timeout: 30_000 }, async (effort, mode, reasoning) => {
+    const ask = await runCli([
+      "ask", "Review this plan", "--model", "gpt-6-astra",
+      "--reasoning", effort, "--reasoning-mode", mode,
+      "--timeout", "3s", "--poll-interval", "1ms", "--format", "json"
+    ], { cwd, baseURL, expertHome });
+
+    expect(ask, `${ask.stderr}\n${ask.stdout}`).toMatchObject({ exitCode: 0 });
+    expect(server.createBodies).toHaveLength(1);
+    const body = server.createBodies[0] as Record<string, unknown>;
+    expect(body.model).toBe("gpt-6-astra");
+    expect(body.reasoning).toEqual(reasoning);
+    for (const unsupported of ["temperature", "top_p", "top_logprobs"]) {
+      expect(body).not.toHaveProperty(unsupported);
+    }
+
+    const askJson = JSON.parse(ask.stdout);
+    const status = await runCli(["status", askJson.job_id, "--format", "json"], { cwd, baseURL, expertHome });
+    expect(status, status.stderr).toMatchObject({ exitCode: 0 });
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      model: "gpt-6-astra",
+      reasoning_effort: effort,
+      reasoning_mode: mode,
+      status: "completed"
     });
   });
 });

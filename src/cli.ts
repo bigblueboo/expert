@@ -33,7 +33,7 @@ export function createProgram(): Command {
 
   program
     .command("ask")
-    .description(`Start a blocking ${DEFAULT_MODEL_DISPLAY_NAME} consultation.`)
+    .description(`Start a blocking consultation with ${DEFAULT_MODEL_DISPLAY_NAME}.`)
     .argument("[prompt...]", "Prompt text to send.")
     .option("-f, --file <pathOrGlob>", "Attach a file or glob. Repeat for multiple files/globs.", collect, [])
     .option("-d, --dir <path>", "Attach files under a directory. Repeatable.", collect, [])
@@ -42,7 +42,7 @@ export function createProgram(): Command {
     .option("--dry-run", "Show resolved context without calling OpenAI.")
     .option("--model <model>", "Model to use.", DEFAULT_MODEL)
     .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(REASONING_EFFORTS).default(DEFAULT_REASONING_EFFORT))
-    .addOption(new Option("--reasoning-mode <mode>", "Reasoning execution mode (default: pro for GPT-5.6 models, standard otherwise).").choices(REASONING_MODES))
+    .addOption(new Option("--reasoning-mode <mode>", "Reasoning execution mode (default: pro for GPT-6 Astra and GPT-5.6 models, standard otherwise).").choices(REASONING_MODES))
     .option("--timeout <duration>", "Maximum time to block while polling.", DEFAULT_TIMEOUT)
     .option("--poll-interval <duration>", "Polling interval.", DEFAULT_POLL_INTERVAL)
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))

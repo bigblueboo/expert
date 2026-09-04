@@ -95,6 +95,29 @@ describe("context resolution", () => {
 });
 
 describe("ask command", () => {
+  it.each([
+    ["gpt-6-astra", { effort: "high", mode: "pro" }],
+    ["gpt-5.6", { effort: "high", mode: "pro" }],
+    ["gpt-5.6-sol", { effort: "high", mode: "pro" }],
+    ["gpt-5.5-pro", { effort: "high" }]
+  ])("preserves the model override and sends compatible reasoning for %s", async (model, reasoning) => {
+    const cwd = await tempDir();
+    const api = new MockOpenAI();
+    const deps = depsFor(cwd, api);
+
+    const code = await runAsk(["Review this plan"], {
+      model,
+      reasoning: "high",
+      timeout: "1s",
+      pollInterval: "1ms",
+      registerSignals: false
+    }, deps);
+
+    expect(code).toBe(0);
+    expect(api.createdBodies[0].model).toBe(model);
+    expect(api.createdBodies[0].reasoning).toEqual(reasoning);
+  });
+
   it("creates a background response, polls to completion, and writes the answer", async () => {
     const cwd = await tempDir();
     await writeFile(path.join(cwd, "notes.md"), "important context", "utf8");
@@ -115,7 +138,7 @@ describe("ask command", () => {
     expect(code).toBe(0);
     expect(api.uploads).toHaveLength(1);
     expect(api.createdBodies[0]).toMatchObject({
-      model: "gpt-5.6",
+      model: "gpt-6-astra",
       background: true,
       store: true,
       reasoning: { effort: "xhigh", mode: "pro" }
@@ -143,7 +166,8 @@ describe("ask command", () => {
     expect(api.createdBodies).toHaveLength(0);
     const payload = JSON.parse(outputOf(deps.stdout));
     expect(payload).toMatchObject({
-      model: "gpt-5.6",
+      model: "gpt-6-astra",
+      reasoning_effort: "xhigh",
       reasoning_mode: "pro",
       files: [{ path: "notes.md" }]
     });

@@ -1,25 +1,48 @@
 ---
 name: expert
-description: Consult GPT-5.6 Pro through the local `expert` CLI for second opinions on coding tasks. Use when the agent needs a high-quality external review, architecture/debugging help, test strategy feedback, implementation plan critique, or analysis of attached code/docs using explicit local files, directories, globs, or stdin. Especially useful for hard, ambiguous, high-risk, or long-running coding questions where a long blocking consult (up to 6 hours by default) is acceptable.
+description: Consult GPT-6 Astra in Pro reasoning mode through the local `expert` CLI for second opinions on difficult coding tasks, architecture, debugging, implementation plans, or test strategy, using explicit local context. Use when an external API consultation that may take hours is appropriate.
 ---
 
 # Expert
 
-Use the `expert` CLI to ask GPT-5.6 Pro for a second opinion with explicit local context. The CLI uploads named files, starts a background Responses API job, polls until completion, and stores a resumable job record.
+Use the `expert` CLI to ask GPT-6 Astra in Pro mode for a second opinion with explicit local context. The CLI uploads named files, starts a background Responses API job, polls until completion, and stores a resumable job record.
 
 ## Quick Start
 
 Prefer the installed binary when available:
 
 ```sh
-expert ask "Review this implementation for correctness and missing tests." --file src/foo.ts --file test/foo.test.ts
+expert ask "Review this implementation for correctness and missing tests." \
+  --model gpt-6-astra --reasoning-mode pro --reasoning xhigh \
+  --file src/foo.ts --file test/foo.test.ts
 ```
 
 If `expert` is not on `PATH`, run it via npx — no install required:
 
 ```sh
-npx -y @bigblueboo/expert ask "Review this implementation for correctness and missing tests." --file src/foo.ts --file test/foo.test.ts
+npx -y @bigblueboo/expert ask "Review this implementation for correctness and missing tests." \
+  --model gpt-6-astra --reasoning-mode pro --reasoning xhigh \
+  --file src/foo.ts --file test/foo.test.ts
 ```
+
+These flags select Astra Pro even when an installed or published CLI still has older defaults. The remaining examples assume the updated CLI defaults; use the explicit flags above if a dry run reports a different model or mode. Preserve any model or reasoning settings explicitly chosen by the user.
+
+## Model and Reasoning
+
+The Responses API configuration is:
+
+```json
+{
+  "model": "gpt-6-astra",
+  "reasoning": { "mode": "pro", "effort": "xhigh" },
+  "background": true,
+  "store": true
+}
+```
+
+Pro is `reasoning.mode`, independent of `reasoning.effort`; use the model ID `gpt-6-astra`. Astra supports `low`, `medium`, `high`, `xhigh`, and `max` effort. Keep `xhigh` for the default expert consult; use `--reasoning max` when the task calls for more reasoning. `--reasoning-mode standard` opts out of Pro. Pro uses more model work and tokens, with higher latency and cost. Astra does not support `none`, `minimal`, `temperature`, `top_p`, or `top_logprobs`.
+
+Verified against the official [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra), [migration guide](https://developers.openai.com/api/docs/guides/latest-model), and [reasoning mode documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode) on 2026-09-04. If the API reports that Astra is unavailable to the account, report that error; preserve the requested model unless the user chooses an alternative.
 
 ## Consultation Workflow
 
@@ -30,13 +53,14 @@ npx -y @bigblueboo/expert ask "Review this implementation for correctness and mi
 2. Gather focused context.
    - Attach only files needed to answer the question.
    - Prefer several exact files plus focused globs over one broad repository glob.
-   - Repeat `--file` for multiple files and globs; use directories when the relevant surface is broad.
+   - Repeat `--file` for multiple files and globs; use `--dir` for directories when the relevant surface is broad.
    - Exclude generated output, vendored dependencies, large artifacts, and secrets.
 
 3. Write a concrete prompt.
    - Include the goal, constraints, known symptoms, what has already been tried, and the desired output shape.
    - Ask for actionable findings, risks, and concrete next steps.
    - For review requests, ask for prioritized bugs and missing tests before summary.
+   - This is a single consultation without local tools or interactive clarification. Ask for the best supported answer from the supplied context, stated assumptions, and specific missing evidence; avoid prompts that require executing commands or waiting for a reply.
 
 4. Run a dry run for broad context and check the token estimate.
 
@@ -44,7 +68,7 @@ npx -y @bigblueboo/expert ask "Review this implementation for correctness and mi
 expert ask "Check whether this refactor is safe." --file package.json --file "src/**/*.ts" --file "test/**/*.ts" --dry-run --format json
 ```
 
-Check `estimated_input_tokens` in the output before sending. Trim the attachment list if it approaches the model's capacity (see Context Budget below).
+Check `model`, `reasoning_mode`, `reasoning_effort`, and `estimated_input_tokens` in the output before sending. Trim the attachment list if it approaches the model's capacity (see Context Budget below).
 
 5. Run the consult and wait for the answer.
 
@@ -86,11 +110,12 @@ expert ask "Deeply analyze this flaky test." --file test/flaky.test.ts --timeout
 
 ## Context Budget
 
-GPT-5.6 Pro has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). Do not exceed it:
+GPT-6 Astra has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). Do not exceed it:
 
 - The CLI estimates input size (~4 characters per token) and refuses to send when the estimate exceeds 900,000 tokens. Prefer trimming the attachment list over raising `--max-context-tokens`.
 - Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1.5x output for the entire request. Stay below that unless the extra context clearly earns its cost; the CLI warns when a consult crosses it.
 - Byte-based estimates are unreliable for PDFs and other rich formats; leave extra headroom when attaching them.
+- `--max-output-tokens` caps reasoning and visible output together; a small cap can exhaust the budget before an answer is produced.
 - When context is too large, split the question into multiple focused consults instead of one oversized one, and summarize earlier answers in follow-up prompts.
 
 ## Context Selection Guidance
@@ -111,4 +136,4 @@ GPT-5.6 Pro has a 1,050,000-token context window shared by input, reasoning, and
 
 ## Defaults
 
-The CLI defaults to `gpt-5.6` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 360 minute (6 hour) timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-5.6 models (GPT-5.6 Pro) and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+The CLI defaults to `gpt-6-astra` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 360 minute (6 hour) timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-6 Astra and GPT-5.6 models and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
