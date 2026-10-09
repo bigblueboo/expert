@@ -1,6 +1,6 @@
 {
   "name": "@bigblueboo/expert",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A blocking GPT-6 Astra consultation CLI for agents, using Pro reasoning mode.",
   "license": "MIT",
   "author": "Charles Deck",
