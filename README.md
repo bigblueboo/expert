@@ -12,10 +12,10 @@ If you know [Oracle](https://github.com/steipete/oracle), this covers similar gr
 
 ## Quick start
 
-Requires Node >= 20 and an `OPENAI_API_KEY`:
+Requires Node >= 20 and an `EXPERT_OPENAI_API_KEY`. Since 0.2.0 the CLI ignores `OPENAI_API_KEY`, so a general OpenAI key in your environment never gets used by accident:
 
 ```sh
-export OPENAI_API_KEY=...
+export EXPERT_OPENAI_API_KEY=...
 npx -y @bigblueboo/expert ask "Review this implementation plan" --file README.md
 ```
 
@@ -29,7 +29,7 @@ Install the skills with the [skills CLI](https://github.com/vercel-labs/skills):
 npx skills add bigblueboo/expert
 ```
 
-It finds what's in this repo's `skills/` directory and installs whichever ones you pick. Both call the CLI through `npx -y @bigblueboo/expert`; there's nothing else to install. Set `OPENAI_API_KEY` wherever your agent runs, then restart the agent.
+It finds what's in this repo's `skills/` directory and installs whichever ones you pick. Both call the CLI through `npx -y @bigblueboo/expert`; there's nothing else to install. Set `EXPERT_OPENAI_API_KEY` wherever your agent runs, then restart the agent.
 
 ### CLI only
 
@@ -138,7 +138,7 @@ skills/
         └── openai.yaml
 ```
 
-Both skills prefer an `expert` binary on `PATH` and fall back to `npx -y @bigblueboo/expert`. Either way `OPENAI_API_KEY` has to be set.
+Both skills prefer an `expert` binary on `PATH` and fall back to `npx -y @bigblueboo/expert`. Either way `EXPERT_OPENAI_API_KEY` has to be set.
 
 ## Development
 

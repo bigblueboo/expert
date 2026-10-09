@@ -62,6 +62,15 @@ fi
 # Pin the model and mode even when PATH or npx resolves an older CLI.
 model_args=(--model gpt-6-astra --reasoning-mode pro --reasoning xhigh)
 
+[[ -n "${EXPERT_OPENAI_API_KEY:-}" ]] || fail "EXPERT_OPENAI_API_KEY is not set"
+
+# expert >= 0.2.0 reads EXPERT_OPENAI_API_KEY; older CLIs on PATH or in the npx
+# cache read OPENAI_API_KEY. Override that name with the expert key for each
+# call, so whichever CLI resolves uses the expert key and never a general one.
+run_expert() {
+  OPENAI_API_KEY="$EXPERT_OPENAI_API_KEY" "${expert_cmd[@]}" "$@"
+}
+
 git rev-parse --show-toplevel >/dev/null 2>&1 || fail "not inside a git repository"
 [[ -n "$note_file" && ! -f "$note_file" ]] && fail "--note file not found: $note_file"
 
@@ -159,7 +168,7 @@ done
 instruction="Perform the thermo-nuclear code quality review defined by the charter at the start of stdin. The diff under review is delimited in stdin; the attached files are full current sources for structural context. Follow the charter's Output Contract exactly."
 
 # Budget-check the EXACT final request: same prompt, same stdin, same attachments.
-estimate_json="$("${expert_cmd[@]}" ask "$instruction" --stdin \
+estimate_json="$(run_expert ask "$instruction" --stdin \
   "${model_args[@]}" "${file_args[@]}" --dry-run --format json <"$prompt_file")"
 estimated_tokens="$(sed -n 's/.*"estimated_input_tokens": \([0-9][0-9]*\).*/\1/p' <<<"$estimate_json" | head -1)"
 [[ -n "$estimated_tokens" ]] || fail "could not parse estimated_input_tokens from dry run"
@@ -181,5 +190,5 @@ fi
 output_args=()
 [[ -n "$output_path" ]] && output_args=(-o "$output_path")
 
-"${expert_cmd[@]}" ask "$instruction" --stdin \
+run_expert ask "$instruction" --stdin \
   "${model_args[@]}" "${file_args[@]}" ${output_args[@]+"${output_args[@]}"} <"$prompt_file"

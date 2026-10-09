@@ -136,4 +136,4 @@ GPT-6 Astra has a 1,050,000-token context window shared by input, reasoning, and
 
 ## Defaults
 
-The CLI defaults to `gpt-6-astra` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 360 minute (6 hour) timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-6 Astra and GPT-5.6 models and `standard` for anything else. It requires `OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.
+The CLI defaults to `gpt-6-astra` with `reasoning.effort: xhigh`, `background: true`, `store: true`, a 360 minute (6 hour) timeout, a 5 second polling interval, and a 900,000-token estimated-input cap (`--max-context-tokens`). `reasoning.mode` defaults to `pro` for GPT-6 Astra and GPT-5.6 models and `standard` for anything else. It requires `EXPERT_OPENAI_API_KEY`; job records are stored under `~/.expert/jobs` unless `EXPERT_HOME` is set.

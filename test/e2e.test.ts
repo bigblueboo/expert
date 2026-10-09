@@ -209,18 +209,38 @@ describe("CLI e2e", () => {
       status: "completed"
     });
   });
+
+  it("ignores OPENAI_API_KEY and requires EXPERT_OPENAI_API_KEY", { timeout: 30_000 }, async () => {
+    const ask = await runCli(
+      ["ask", "Consult on this", "--timeout", "3s", "--poll-interval", "1ms"],
+      { cwd, baseURL, expertHome, env: { EXPERT_OPENAI_API_KEY: undefined, OPENAI_API_KEY: "general-key" } }
+    );
+
+    expect(ask.exitCode).not.toBe(0);
+    expect(ask.stderr).toContain("EXPERT_OPENAI_API_KEY is required.");
+    expect(server.requests).toHaveLength(0);
+  });
 });
 
-function runCli(args: string[], options: { cwd: string; baseURL: string; expertHome: string }): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+function runCli(
+  args: string[],
+  options: { cwd: string; baseURL: string; expertHome: string; env?: Record<string, string | undefined> }
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    EXPERT_OPENAI_API_KEY: "test-key",
+    OPENAI_BASE_URL: options.baseURL,
+    EXPERT_HOME: options.expertHome,
+    ...options.env
+  };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete env[key];
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.resolve("dist/cli.js"), ...args], {
       cwd: options.cwd,
-      env: {
-        ...process.env,
-        OPENAI_API_KEY: "test-key",
-        OPENAI_BASE_URL: options.baseURL,
-        EXPERT_HOME: options.expertHome
-      },
+      env,
       stdio: ["ignore", "pipe", "pipe"]
     });
 

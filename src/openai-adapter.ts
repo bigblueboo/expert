@@ -8,7 +8,10 @@ export class OpenAISdkAdapter implements OpenAIAdapter {
   private readonly apiKey: string | undefined;
   private readonly baseURL: string | undefined;
 
-  constructor(apiKey = process.env.OPENAI_API_KEY, baseURL = process.env.OPENAI_BASE_URL) {
+  constructor(
+    apiKey = process.env.EXPERT_OPENAI_API_KEY,
+    baseURL = process.env.OPENAI_BASE_URL
+  ) {
     this.apiKey = apiKey;
     this.baseURL = baseURL;
   }
@@ -43,7 +46,7 @@ export class OpenAISdkAdapter implements OpenAIAdapter {
 
   private getClient(): OpenAI {
     if (!this.apiKey) {
-      throw new Error("OPENAI_API_KEY is required.");
+      throw new Error("EXPERT_OPENAI_API_KEY is required.");
     }
     this.client ??= new OpenAI({ apiKey: this.apiKey, baseURL: this.baseURL });
     return this.client;

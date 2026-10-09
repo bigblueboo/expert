@@ -20,7 +20,8 @@ generous context; when in doubt, attach more.
 
 ## Before you run it
 
-- Needs `OPENAI_API_KEY`. The script prefers `expert` on `PATH` and falls back to
+- Needs `EXPERT_OPENAI_API_KEY`; the script stops if it is unset and never reads
+  `OPENAI_API_KEY`. It prefers `expert` on `PATH` and falls back to
   `npx -y @bigblueboo/expert` on its own. It explicitly selects `gpt-6-astra` with
   `reasoning.mode: pro` and `reasoning.effort: xhigh`, including for its dry run.
 - The consult spends real tokens and can block for hours (default timeout 6h). That
