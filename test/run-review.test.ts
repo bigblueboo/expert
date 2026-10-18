@@ -131,6 +131,27 @@ describe("run-review.sh", () => {
     expect(await readFile(path.join(log, "env"), "utf8")).not.toContain("EXPERT_OPENAI_API_KEY");
   });
 
+  it("raises Codex's context window for gpt-6-astra only", { timeout: 60_000 }, async () => {
+    const launchArgs = async (extra: string[]) => {
+      const result = await run(["--engine", "codex", ...extra]);
+      expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+      return (await readFile(path.join(log, "args"), "utf8")).split("\n");
+    };
+
+    expect(await launchArgs(["--codex-model", "gpt-6-astra"])).toContain("model_context_window=1050000");
+    expect((await launchArgs([])).join(" ")).not.toContain("model_context_window");
+  });
+
+  it("stops before launching when the diff exceeds Codex's prompt limit", { timeout: 30_000 }, async () => {
+    await writeFile(path.join(repo, "huge.txt"), "x".repeat(1_100_000));
+
+    const result = await run(["--engine", "codex"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("over Codex's 1,048,576-character prompt limit");
+    expect(existsSync(path.join(log, "args"))).toBe(false);
+  });
+
   it("lists only changed files unless context is attached", { timeout: 30_000 }, async () => {
     const result = await run(["--engine", "codex"]);
 

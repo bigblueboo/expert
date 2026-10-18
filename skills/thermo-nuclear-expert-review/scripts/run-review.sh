@@ -97,6 +97,15 @@ NOTE
 )"
     instruction="Perform the thermo-nuclear code quality review defined by the charter at the start of stdin. Read every file in the context manifest in full, then whatever else in the repository you need. You are in a read-only sandbox; do not modify anything. Your final message is the review itself and must follow the charter's Output Contract exactly; do not narrate what you read."
     engine_label="codex ($codex_model, $codex_effort)"
+    # Codex holds gpt-6-astra to 272k although the API serves 1.05M; with the
+    # window raised, a ChatGPT login accepted a 650k-token prompt (2026-10-18).
+    # Other models keep Codex's own window.
+    codex_window_args=()
+    codex_fit_tokens=400000
+    if [[ "$codex_model" == "gpt-6-astra" ]]; then
+      codex_window_args=(-c model_context_window=1050000)
+      codex_fit_tokens=800000
+    fi
     ;;
   *) fail "--engine must be expert or codex, not $engine" ;;
 esac
@@ -272,8 +281,18 @@ codex_check() {
   command -v codex >/dev/null 2>&1 || fail "codex not found on PATH; install it and run codex login"
   # Auth lives in CODEX_HOME, which the launch uses even while ignoring config.
   codex login status >/dev/null 2>&1 || fail "codex is not logged in; run codex login"
-  if [[ "$estimated_tokens" -gt 400000 ]]; then
-    echo "run-review: warning: ~$estimated_tokens tokens of context will not fit in one Codex window; it will compact as it reads, so trim --attach for a sharper review" >&2
+  if [[ "$estimated_tokens" -gt "$codex_fit_tokens" ]]; then
+    echo "run-review: warning: ~$estimated_tokens tokens of context will not fit in one $codex_model window; Codex will compact as it reads, so trim --attach for a sharper review" >&2
+  fi
+  # Codex refuses a single turn over 1,048,576 characters, counting the prompt
+  # and the stdin it wraps. Attached files are read by tools and do not count.
+  local prompt_chars
+  prompt_chars="$(node -e '
+    const text = require("fs").readFileSync(process.argv[1], "utf8") + process.argv[2];
+    console.log([...text].length);
+  ' "$prompt_file" "$instruction")" || fail "could not measure the Codex prompt"
+  if [[ "$prompt_chars" -gt 1048000 ]]; then
+    fail "the charter and diff come to $prompt_chars characters, over Codex's 1,048,576-character prompt limit; narrow the diff with --base or split the review by subsystem"
   fi
 }
 
@@ -317,6 +336,7 @@ codex_consult() {
   [[ -n "$output_path" ]] && output_args=(-o "$output_path")
   env -u EXPERT_OPENAI_API_KEY codex exec "${lockdown[@]}" -C "$PWD" \
     -m "$codex_model" -c "model_reasoning_effort=\"$codex_effort\"" \
+    ${codex_window_args[@]+"${codex_window_args[@]}"} \
     ${output_args[@]+"${output_args[@]}"} "$instruction" <"$prompt_file"
 }
 

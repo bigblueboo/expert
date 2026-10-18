@@ -31,8 +31,12 @@ Use `--engine expert` (the default) unless the user asks for Codex or has no
   has (ChatGPT subscription or API key). It runs inside the repository in a
   read-only sandbox, gets the same prompt, and is told to read every context file in
   full; it can also open any other file and run read-only commands. Defaults to
-  `gpt-6.1-sol` at `xhigh` effort; override with `--codex-model` and
-  `--codex-effort`.
+  `gpt-6.1-sol` (500k window) at `xhigh` effort; override with `--codex-model` and
+  `--codex-effort`. With `--codex-model gpt-6-astra` the script lifts Codex's
+  272k cap on that model to its full 1.05M API window. Codex takes at most
+  1,048,576 characters per prompt, so a charter-plus-diff over about 1MB stops
+  before launch; attached files don't count toward that, since Codex reads them
+  with its tools.
 
 ## Before you run it
 
