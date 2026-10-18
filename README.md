@@ -6,7 +6,7 @@
 
 `expert` asks GPT-6 Astra in Pro mode for a second opinion, with real files from your repo attached. You name the files; it uploads them, starts a background job on the OpenAI Responses API, and polls until the answer comes back. Pro consults can take a while — the default timeout is 6 hours (`--timeout` to change it). Every consult gets a local job record, so if your terminal dies mid-wait you can pick the job back up with `expert resume`.
 
-The repo also includes two agent skills. [expert](skills/expert/SKILL.md) teaches Claude Code, Codex, and other coding agents when to reach for the CLI. [thermo-nuclear-expert-review](skills/thermo-nuclear-expert-review/SKILL.md) uses it for an ultra-strict structural code review: the diff, a demanding review charter, and as much of your repo as the token budget allows all go to GPT-6 Astra in Pro mode together. Pass `--engine codex` to run the same review through your local `codex` CLI instead, read-only inside the repo and under its existing login. Its standards are adapted from the Cursor team's thermo-nuclear-code-quality-review skill.
+The repo also includes two agent skills. [expert](skills/expert/SKILL.md) teaches Claude Code, Codex, and other coding agents when to reach for the CLI. [thermo-nuclear-expert-review](skills/thermo-nuclear-expert-review/SKILL.md) uses it for an ultra-strict structural code review: the diff, a demanding review charter, and as much of your repo as the token budget allows all go to GPT-6 Astra in Pro mode together. Pass `--engine codex` or `--engine claude` to run the same review through your local Codex (GPT-6 Astra) or Claude Code (Claude Fable) instead, read-only inside the repo and under its existing login. Its standards are adapted from the Cursor team's thermo-nuclear-code-quality-review skill.
 
 If you know [Oracle](https://github.com/steipete/oracle), this covers similar ground. Oracle can drive ChatGPT Pro through a browser session so subscribers don't need an API key; `expert` stays on the API. One engine, fewer moving parts.
 
@@ -138,7 +138,7 @@ skills/
         └── openai.yaml
 ```
 
-Both skills prefer an `expert` binary on `PATH` and fall back to `npx -y @bigblueboo/expert`. Either way `EXPERT_OPENAI_API_KEY` has to be set, except for a thermo-nuclear review with `--engine codex`, which uses Codex's own login and needs only the `expert` CLI for its dry run.
+Both skills prefer an `expert` binary on `PATH` and fall back to `npx -y @bigblueboo/expert`. Either way `EXPERT_OPENAI_API_KEY` has to be set, except for a thermo-nuclear review with `--engine codex` or `--engine claude`, which use that agent's own login and need only the `expert` CLI for the dry run.
 
 ## Development
 

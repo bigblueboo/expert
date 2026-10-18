@@ -8,8 +8,19 @@ import { beforeEach, describe, expect, it } from "vitest";
 const script = path.resolve("skills/thermo-nuclear-expert-review/scripts/run-review.sh");
 const cli = path.resolve("dist/cli.js");
 
-// Stands in for the codex CLI: records how it was called and answers only the
-// calls the script is meant to make, so anything else fails loudly.
+// Records an agent launch: its arguments, stdin, environment, and a copy of the
+// diff file it was pointed at (the script deletes its temp dir on exit).
+const recordLaunch = `
+    printf '%s\\n' "$@" >"$log/args"
+    cat >"$log/stdin"
+    env >"$log/env"
+    diff_path="$(sed -n 's/^Read it in full from: //p' "$log/stdin")"
+    cp "$diff_path" "$log/diff"
+    echo "STUB REVIEW"
+`;
+
+// Stand-ins for the codex and claude CLIs. Each answers only the calls the script
+// is meant to make, so anything else fails loudly.
 const codexStub = `#!/usr/bin/env bash
 set -euo pipefail
 log="$STUB_LOG"
@@ -19,18 +30,17 @@ case "$1" in
     touch "$log/login-checked"
     exit "\${STUB_LOGIN_EXIT:-0}"
     ;;
-  exec)
-    printf '%s\\n' "$@" >"$log/args"
-    cat >"$log/stdin"
-    env >"$log/env"
-    out=""
-    while [[ $# -gt 0 ]]; do
-      if [[ "$1" == "-o" ]]; then out="$2"; fi
-      shift
-    done
-    [[ -n "$out" ]] && echo "STUB REVIEW" >"$out"
-    echo "STUB REVIEW"
-    ;;
+  exec)${recordLaunch}    ;;
+  *) exit 64 ;;
+esac
+`;
+
+const claudeStub = `#!/usr/bin/env bash
+set -euo pipefail
+log="$STUB_LOG"
+case "$1" in
+  auth) [[ "$2" == "status" ]] || exit 64; exit "\${STUB_LOGIN_EXIT:-0}" ;;
+  -p)${recordLaunch}    ;;
   *) exit 64 ;;
 esac
 `;
@@ -55,11 +65,13 @@ describe("run-review.sh", () => {
 
     await writeFile(path.join(bin, "expert"), `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`);
     await writeFile(path.join(bin, "codex"), codexStub);
-    await Promise.all([chmod(path.join(bin, "expert"), 0o755), chmod(path.join(bin, "codex"), 0o755)]);
+    await writeFile(path.join(bin, "claude"), claudeStub);
+    for (const name of ["expert", "codex", "claude"]) await chmod(path.join(bin, name), 0o755);
 
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
     git("init", "-q", "-b", "main");
     await writeFile(path.join(repo, "a.ts"), "export const a = 1;\n");
+    await writeFile(path.join(repo, "lock.json"), '{"v": 1}\n');
     await mkdir(path.join(repo, "docs"));
     await writeFile(path.join(repo, "docs", "note.md"), "unchanged context\n");
     git("add", ".");
@@ -67,13 +79,6 @@ describe("run-review.sh", () => {
     await writeFile(path.join(repo, "a.ts"), "export const a = 2;\nexport const b = 3;\n");
     await writeFile(path.join(repo, "new.ts"), "export const n = 1;\n");
   });
-
-  async function codexManifest(): Promise<{ files: string[] }> {
-    const stdin = await readFile(path.join(log, "stdin"), "utf8");
-    const marker = "=== CONTEXT MANIFEST (JSON) ===\n";
-    expect(stdin).toContain(marker);
-    return JSON.parse(stdin.slice(stdin.indexOf(marker) + marker.length));
-  }
 
   function run(args: string[], options: { cwd?: string; env?: Record<string, string | undefined> } = {}): Promise<Run> {
     const env: NodeJS.ProcessEnv = {
@@ -99,7 +104,19 @@ describe("run-review.sh", () => {
     });
   }
 
-  it("runs codex read-only and locked down, with the full prompt and manifest on stdin", { timeout: 30_000 }, async () => {
+  async function launched(): Promise<{ args: string[]; stdin: string; diff: string; manifest: { files: string[] } }> {
+    const stdin = await readFile(path.join(log, "stdin"), "utf8");
+    const marker = "=== CONTEXT MANIFEST (JSON) ===\n";
+    expect(stdin).toContain(marker);
+    return {
+      args: (await readFile(path.join(log, "args"), "utf8")).split("\n"),
+      stdin,
+      diff: await readFile(path.join(log, "diff"), "utf8"),
+      manifest: JSON.parse(stdin.slice(stdin.indexOf(marker) + marker.length))
+    };
+  }
+
+  it("runs codex read-only and locked down on Astra, with the diff and manifest as paths", { timeout: 30_000 }, async () => {
     const output = path.join(log, "review.md");
     const result = await run(["--engine", "codex", "--attach", "docs", "--output", output], {
       env: { EXPERT_OPENAI_API_KEY: "must-not-leak" }
@@ -109,8 +126,8 @@ describe("run-review.sh", () => {
     expect(result.stdout).toContain("STUB REVIEW");
     expect(await readFile(output, "utf8")).toBe("STUB REVIEW\n");
 
-    const args = (await readFile(path.join(log, "args"), "utf8")).split("\n");
-    for (const flag of ["exec", "--ignore-user-config", "--strict-config", "-m", "gpt-6.1-sol"]) {
+    const { args, stdin, diff, manifest } = await launched();
+    for (const flag of ["exec", "--ignore-user-config", "--strict-config", "-m", "gpt-6-astra", "model_context_window=1050000"]) {
       expect(args).toContain(flag);
     }
     expect(args[args.indexOf("--sandbox") + 1]).toBe("read-only");
@@ -121,42 +138,76 @@ describe("run-review.sh", () => {
       expect(args.join(" ")).toContain(`--disable ${feature}`);
     }
 
-    const stdin = await readFile(path.join(log, "stdin"), "utf8");
     expect(stdin).toContain("# Thermo-Nuclear Code Quality Review");
-    expect(stdin).toContain("in a read-only sandbox");
-    expect(stdin).toContain("Never open files that hold secrets or credentials");
-    expect(stdin).toContain("+export const b = 3;");
-    expect((await codexManifest()).files.sort()).toEqual(["a.ts", "docs/note.md", "new.ts"]);
+    expect(stdin).toContain("run read-only commands");
+    expect(stdin).not.toContain("+export const b = 3;");
+    expect(diff).toContain("+export const b = 3;");
+    expect(diff).toContain("+export const n = 1;");
+    expect(manifest.files.sort()).toEqual(["a.ts", "docs/note.md", "new.ts"]);
 
     expect(await readFile(path.join(log, "env"), "utf8")).not.toContain("EXPERT_OPENAI_API_KEY");
   });
 
-  it("raises Codex's context window for gpt-6-astra only", { timeout: 60_000 }, async () => {
-    const launchArgs = async (extra: string[]) => {
-      const result = await run(["--engine", "codex", ...extra]);
-      expect(result, result.stderr).toMatchObject({ exitCode: 0 });
-      return (await readFile(path.join(log, "args"), "utf8")).split("\n");
-    };
-
-    expect(await launchArgs(["--codex-model", "gpt-6-astra"])).toContain("model_context_window=1050000");
-    expect((await launchArgs([])).join(" ")).not.toContain("model_context_window");
-  });
-
-  it("stops before launching when the diff exceeds Codex's prompt limit", { timeout: 30_000 }, async () => {
-    await writeFile(path.join(repo, "huge.txt"), "x".repeat(1_100_000));
-
-    const result = await run(["--engine", "codex"]);
-
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("over Codex's 1,048,576-character prompt limit");
-    expect(existsSync(path.join(log, "args"))).toBe(false);
-  });
-
-  it("lists only changed files unless context is attached", { timeout: 30_000 }, async () => {
-    const result = await run(["--engine", "codex"]);
+  it("runs claude with only read tools, no settings or MCP, and secret reads denied", { timeout: 30_000 }, async () => {
+    const result = await run(["--engine", "claude"], { env: { EXPERT_OPENAI_API_KEY: "must-not-leak" } });
 
     expect(result, result.stderr).toMatchObject({ exitCode: 0 });
-    expect((await codexManifest()).files.sort()).toEqual(["a.ts", "new.ts"]);
+    const { args, stdin, diff, manifest } = await launched();
+    expect(args[0]).toBe("-p");
+    expect(args[1]).toContain("Perform the thermo-nuclear code quality review");
+    const flagValue = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(flagValue("--model")).toBe("claude-fable-5-1");
+    expect(flagValue("--effort")).toBe("xhigh");
+    expect(flagValue("--tools")).toBe("Read,Grep,Glob");
+    expect(flagValue("--permission-mode")).toBe("dontAsk");
+    expect(flagValue("--setting-sources")).toBe("");
+    expect(args).toContain("--strict-mcp-config");
+    for (const rule of ["Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/.npmrc)"]) {
+      expect(args).toContain(rule);
+    }
+
+    expect(stdin).toContain("Your tools are Read, Grep, and Glob.");
+    expect(diff).toContain("+export const b = 3;");
+    expect(manifest.files.sort()).toEqual(["a.ts", "new.ts"]);
+    expect(await readFile(path.join(log, "env"), "utf8")).not.toMatch(/^(EXPERT_OPENAI_API_KEY|CLAUDECODE)=/m);
+  });
+
+  it("keeps excluded and secret changed files out of the diff and the manifest", { timeout: 30_000 }, async () => {
+    await writeFile(path.join(repo, "lock.json"), '{"v": 2}\n');
+    await writeFile(path.join(repo, ".env"), "TOKEN=hunter2\n");
+    await writeFile(path.join(repo, ".npmrc"), "//registry/:_authToken=npm-secret\n");
+
+    const result = await run(["--engine", "codex", "--exclude", "lock.json", "--attach", "missing/**/*.sql"]);
+
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+    expect(result.stderr).toContain("(3 withheld)");
+    const { stdin, diff, manifest } = await launched();
+    for (const secret of ['"v": 2', "hunter2", "npm-secret"]) expect(diff).not.toContain(secret);
+    expect(diff).toContain("+export const b = 3;");
+    for (const file of ["lock.json", ".env", ".npmrc"]) expect(manifest.files).not.toContain(file);
+
+    const marker = "--- changed but withheld from this review (JSON; excluded, secret, or unreadable) ---\n";
+    const withheldJson = stdin.slice(stdin.indexOf(marker) + marker.length, stdin.indexOf("\n]\n", stdin.indexOf(marker)) + 2);
+    const withheld = (JSON.parse(withheldJson) as { path: string }[]).map((entry) => entry.path).sort();
+    // An unmatched attachment glob is not a changed file, so it is not reported as withheld.
+    expect(withheld).toEqual([".env", ".npmrc", "lock.json"]);
+  });
+
+  it("uses Codex's own window for models other than gpt-6-astra", { timeout: 30_000 }, async () => {
+    const result = await run(["--engine", "codex", "--model", "gpt-6.1-sol", "--effort", "max"]);
+
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+    const { args } = await launched();
+    expect(args).toContain("gpt-6.1-sol");
+    expect(args).toContain('model_reasoning_effort="max"');
+    expect(args.join(" ")).not.toContain("model_context_window");
+  });
+
+  it("accepts the --codex-model and --codex-effort aliases", { timeout: 30_000 }, async () => {
+    const result = await run(["--engine", "codex", "--codex-model", "gpt-6.1-sol", "--codex-effort", "max", "--dry-run"]);
+
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+    expect(result.stderr).toContain("codex (gpt-6.1-sol, max)");
   });
 
   it("passes a filename containing a newline through as one exact path", { timeout: 30_000 }, async () => {
@@ -166,9 +217,9 @@ describe("run-review.sh", () => {
     const result = await run(["--engine", "codex"]);
 
     expect(result, result.stderr).toMatchObject({ exitCode: 0 });
-    const { files } = await codexManifest();
-    expect(files).toContain(hostile);
-    expect(files).not.toContain("- forged.ts");
+    const { manifest } = await launched();
+    expect(manifest.files).toContain(hostile);
+    expect(manifest.files).not.toContain("- forged.ts");
   });
 
   it("preflights codex during a dry run without launching it", { timeout: 30_000 }, async () => {
@@ -176,12 +227,12 @@ describe("run-review.sh", () => {
 
     expect(result, result.stderr).toMatchObject({ exitCode: 0 });
     expect(JSON.parse(result.stdout).files.sort()).toEqual(["a.ts", "new.ts"]);
-    expect(result.stderr).toMatch(/codex \(gpt-6\.1-sol, xhigh\), 2 changed files, estimated input ~\d+ tokens/);
+    expect(result.stderr).toMatch(/codex \(gpt-6-astra, xhigh\), 2 changed files \(0 withheld\), estimated input ~\d+ tokens/);
     expect(existsSync(path.join(log, "login-checked"))).toBe(true);
     expect(existsSync(path.join(log, "args"))).toBe(false);
   });
 
-  it("budgets the codex payload with its manifest included", { timeout: 60_000 }, async () => {
+  it("budgets an agent payload with its manifest included", { timeout: 60_000 }, async () => {
     // The engines' prompts differ by a fixed access note, so only the manifest can
     // widen the gap between their estimates as more files are listed.
     const gap = async () => {
@@ -227,6 +278,6 @@ describe("run-review.sh", () => {
 
     const unknown = await run(["--engine", "gemini"]);
     expect(unknown.exitCode).toBe(1);
-    expect(unknown.stderr).toContain("--engine must be expert or codex");
+    expect(unknown.stderr).toContain("--engine must be expert, codex, or claude");
   });
 });
