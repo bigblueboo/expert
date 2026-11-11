@@ -27,7 +27,8 @@ Pick the reviewer the user names; they will usually say a model, not an engine.
 |---|---|---|---|
 | GPT-6 Astra Pro | `--engine expert` (default) | OpenAI API, Pro reasoning mode | `EXPERT_OPENAI_API_KEY` |
 | GPT-6 Astra | `--engine codex` | local `codex` CLI, read-only sandbox | Codex's own (ChatGPT plan or API key) |
-| Claude Fable | `--engine claude` | local `claude` CLI, read-only tools | Claude Code's own (Claude plan or API key) |
+| GPT-6.2 Sol (or any Codex model) | `--engine codex --model gpt-6.2-sol` | same | same |
+| Claude Fable 5.2 | `--engine claude` | local `claude` CLI, read-only tools | Claude Code's own (Claude plan or API key) |
 
 With no preference stated, use `expert` when `EXPERT_OPENAI_API_KEY` is set, and
 otherwise `codex` or `claude`, whichever is installed and logged in. Every engine
@@ -126,7 +127,9 @@ the exact JSON manifest the agent will get for `codex` and `claude`:
 real path. With `expert`, if the estimate crosses 272k the script stops; rerun with
 `--yes` only when the extra context genuinely earns the surcharge (large diff, heavy
 cross-package coupling). The agents have no surcharge; for `codex` the script warns
-when the estimate will not fit in one window (~800k for Astra, ~400k otherwise) and
+when the estimate will not fit in four fifths of the model's window (~800k for Astra;
+other models use the window in Codex's cached model list, or 500k if the model is
+not listed yet) and
 Codex would compact as it reads, so trim instead of letting it. For every engine,
 if the estimate exceeds the 900k cap, trim `--attach` entries or
 split the review by subsystem — and if you split, either deliver per-subsystem

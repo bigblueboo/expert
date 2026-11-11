@@ -22,7 +22,7 @@ Usage: run-review.sh [options]
                       codex: the local codex CLI, read-only, its own login.
                       claude: the local claude CLI (Claude Fable), read-only, its own login.
   --model <m>         Override the engine's model (expert/codex: gpt-6-astra,
-                      claude: claude-fable-5-1).
+                      claude: claude-fable-5-2).
   --effort <e>        Override the reasoning effort (default xhigh on every engine).
   --base <ref>        Base to diff against (default: merge-base with the default branch).
   --attach <path>     Extra context file/glob/dir. Repeatable. Changed files are always
@@ -78,12 +78,27 @@ case "$engine" in
           agent_tools="You can read any file and run read-only commands such as grep, git log, and git show."
           # Codex holds gpt-6-astra to 272k although the API serves 1.05M; with
           # the window raised, a ChatGPT login accepted a 650k-token prompt
-          # (2026-10-18). Other models keep Codex's own window.
-          codex_window_args=(); codex_fit_tokens=400000
+          # (2026-10-18). Other models keep Codex's own window, read from the
+          # model list Codex caches, so a new model (gpt-6.2-sol) needs no edit.
+          codex_window_args=()
           if [[ "$model" == "gpt-6-astra" ]]; then
-            codex_window_args=(-c model_context_window=1050000); codex_fit_tokens=800000
-          fi ;;
-  claude) engine_kind=agent; model="${model:-claude-fable-5-1}"
+            codex_window_args=(-c model_context_window=1050000); codex_window=1050000
+          else
+            codex_window="$(node -e '
+              const [file, slug] = process.argv.slice(1);
+              let models = [];
+              try { models = JSON.parse(require("fs").readFileSync(file, "utf8")).models ?? []; } catch {}
+              const hit = models.find((m) => m.slug === slug);
+              process.stdout.write(String(hit?.context_window ?? ""));
+            ' "${CODEX_HOME:-$HOME/.codex}/models_cache.json" "$model")"
+          fi
+          if [[ -z "$codex_window" ]]; then
+            echo "run-review: warning: $model is not in Codex's cached model list; if Codex rejects it, the model has not reached this login yet. Assuming a 500k window." >&2
+            codex_window=500000
+          fi
+          # Leave a fifth of the window for reasoning and output.
+          codex_fit_tokens=$((codex_window * 4 / 5)) ;;
+  claude) engine_kind=agent; model="${model:-claude-fable-5-2}"
           agent_tools="Your tools are Read, Grep, and Glob." ;;
   *) fail "--engine must be expert, codex, or claude, not $engine" ;;
 esac
@@ -351,7 +366,7 @@ codex_check() {
   # Auth lives in CODEX_HOME, which the launch uses even while ignoring config.
   codex login status >/dev/null 2>&1 || fail "codex is not logged in; run codex login"
   if [[ "$estimated_tokens" -gt "$codex_fit_tokens" ]]; then
-    echo "run-review: warning: ~$estimated_tokens tokens of context will not fit in one $model window; Codex will compact as it reads, so trim --attach for a sharper review" >&2
+    echo "run-review: warning: ~$estimated_tokens tokens of context will not fit in one $model window ($codex_window tokens); Codex will compact as it reads, so trim --attach for a sharper review" >&2
   fi
 }
 

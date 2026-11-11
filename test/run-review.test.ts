@@ -55,13 +55,19 @@ describe("run-review.sh", () => {
   let repo: string;
   let log: string;
   let bin: string;
+  let codexHome: string;
 
   beforeEach(async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "run-review-"));
     repo = path.join(root, "repo");
     log = path.join(root, "log");
     bin = path.join(root, "bin");
-    await Promise.all([mkdir(repo), mkdir(log), mkdir(bin)]);
+    codexHome = path.join(root, "codex-home");
+    await Promise.all([mkdir(repo), mkdir(log), mkdir(bin), mkdir(codexHome)]);
+    await writeFile(
+      path.join(codexHome, "models_cache.json"),
+      JSON.stringify({ models: [{ slug: "gpt-6-astra", context_window: 272000 }, { slug: "gpt-6.1-sol", context_window: 500000 }] })
+    );
 
     await writeFile(path.join(bin, "expert"), `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`);
     await writeFile(path.join(bin, "codex"), codexStub);
@@ -85,6 +91,7 @@ describe("run-review.sh", () => {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       STUB_LOG: log,
+      CODEX_HOME: codexHome,
       EXPERT_OPENAI_API_KEY: undefined,
       ...options.env
     };
@@ -156,7 +163,7 @@ describe("run-review.sh", () => {
     expect(args[0]).toBe("-p");
     expect(args[1]).toContain("Perform the thermo-nuclear code quality review");
     const flagValue = (flag: string) => args[args.indexOf(flag) + 1];
-    expect(flagValue("--model")).toBe("claude-fable-5-1");
+    expect(flagValue("--model")).toBe("claude-fable-5-2");
     expect(flagValue("--effort")).toBe("xhigh");
     expect(flagValue("--tools")).toBe("Read,Grep,Glob");
     expect(flagValue("--permission-mode")).toBe("dontAsk");
@@ -201,6 +208,27 @@ describe("run-review.sh", () => {
     expect(args).toContain("gpt-6.1-sol");
     expect(args).toContain('model_reasoning_effort="max"');
     expect(args.join(" ")).not.toContain("model_context_window");
+  });
+
+  it("sizes a newly listed Codex model from Codex's model list", { timeout: 30_000 }, async () => {
+    await writeFile(
+      path.join(codexHome, "models_cache.json"),
+      JSON.stringify({ models: [{ slug: "gpt-6.2-sol", context_window: 100 }] })
+    );
+    const result = await run(["--engine", "codex", "--model", "gpt-6.2-sol", "--dry-run"]);
+
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+    expect(result.stderr).toContain("codex (gpt-6.2-sol, xhigh)");
+    expect(result.stderr).toContain("will not fit in one gpt-6.2-sol window (100 tokens)");
+    expect(result.stderr).not.toContain("not in Codex's cached model list");
+  });
+
+  it("warns, and assumes a 500k window, for a model Codex has not listed yet", { timeout: 30_000 }, async () => {
+    const result = await run(["--engine", "codex", "--model", "gpt-6.2-sol", "--dry-run"]);
+
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+    expect(result.stderr).toContain("gpt-6.2-sol is not in Codex's cached model list");
+    expect(result.stderr).not.toContain("will not fit");
   });
 
   it("accepts the --codex-model and --codex-effort aliases", { timeout: 30_000 }, async () => {
