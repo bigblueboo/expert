@@ -30,7 +30,8 @@
     "expert": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "publishConfig": {
     "access": "public"
