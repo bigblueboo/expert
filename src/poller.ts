@@ -1,4 +1,4 @@
-import type { OpenAIAdapter, ResponseLike } from "./types.js";
+import type { ResponseLike, ResponseSource } from "./types.js";
 import { isActiveStatus } from "./output.js";
 import { sleep } from "./time.js";
 
@@ -15,7 +15,7 @@ export type PollOutcome =
   | { kind: "timeout"; response: ResponseLike | null };
 
 export async function pollResponse(
-  api: OpenAIAdapter,
+  api: Pick<ResponseSource, "retrieveResponse">,
   responseId: string,
   options: PollOptions
 ): Promise<PollOutcome> {
@@ -64,6 +64,8 @@ async function interruptibleSleep(ms: number, shouldStop?: () => boolean): Promi
 }
 
 function isRetryableError(error: unknown): boolean {
+  // An adapter marks transport failures it knows to be transient.
+  if (error instanceof Error && (error as { retryable?: unknown }).retryable === true) return true;
   const status = httpStatus(error);
   if (status === 429) return true;
   if (status !== undefined && status >= 500) return true;

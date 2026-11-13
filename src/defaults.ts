@@ -12,6 +12,8 @@ export const DEFAULT_POLL_INTERVAL = "5s";
 // input, reasoning, and output (128,000 max output tokens). Cap estimated
 // input below the window minus the output reserve.
 export const MODEL_CONTEXT_WINDOW_TOKENS = 1_050_000;
+// Gemini 4 models share a 1,048,576-token window across input, thinking, and output.
+export const GEMINI_CONTEXT_WINDOW_TOKENS = 1_048_576;
 export const DEFAULT_MAX_CONTEXT_TOKENS = 900_000;
 // OpenAI bills requests whose input exceeds this at 2x input / 1.5x output
 // for the entire request.
@@ -24,3 +26,4 @@ export function defaultReasoningMode(model: string): ReasoningMode {
     ? "pro"
     : "standard";
 }
+

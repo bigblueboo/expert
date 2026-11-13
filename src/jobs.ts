@@ -2,8 +2,8 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { JOB_STATUSES, REASONING_EFFORTS, REASONING_MODES } from "./types.js";
-import type { JobRecord, JobRef, ResponseLike } from "./types.js";
+import { JOB_STATUSES, PROVIDERS, REASONING_EFFORTS, REASONING_MODES } from "./types.js";
+import type { JobRecord, JobRef, Provider, ResponseLike } from "./types.js";
 import { normalizeStatus } from "./output.js";
 
 const uploadedFileSchema = z.object({
@@ -21,6 +21,7 @@ const jobRecordSchema: z.ZodType<JobRecord> = z.object({
   schemaVersion: z.number().optional(),
   jobId: z.string(),
   responseId: z.string(),
+  provider: z.enum(PROVIDERS).optional(),
   model: z.string(),
   reasoningEffort: z.enum(REASONING_EFFORTS),
   reasoningMode: z.enum(REASONING_MODES).optional(),
@@ -66,15 +67,19 @@ export class JobStore {
     await rename(temp, target);
   }
 
-  async load(id: string): Promise<JobRef> {
-    if (id.startsWith("resp_")) {
-      const record = await this.findByResponseId(id);
-      return { responseId: id, record: record ?? undefined };
+  // `provider` names the provider of a raw id that has no saved record, and must
+  // agree with a saved record's provider when there is one.
+  async load(id: string, provider?: Provider): Promise<JobRef> {
+    if (id.startsWith("job_")) {
+      const record = jobRecordSchema.parse(JSON.parse(await readFile(this.pathForJob(id), "utf8")));
+      return refForRecord(record, provider);
     }
-
-    const raw = await readFile(this.pathForJob(id), "utf8");
-    const record = jobRecordSchema.parse(JSON.parse(raw));
-    return { responseId: record.responseId, record };
+    this.pathForJob(id); // same character rules as a job id, so nothing odd reaches the search
+    const record = await this.findByResponseId(id);
+    if (record) return refForRecord(record, provider);
+    if (provider) return { provider, responseId: id };
+    if (id.startsWith("resp_")) return { provider: "openai", responseId: id };
+    throw new Error(`No saved job for ${id}; for a raw Gemini interaction id, pass --provider gemini.`);
   }
 
   private async findByResponseId(responseId: string): Promise<JobRecord | null> {
@@ -110,6 +115,15 @@ export class JobStore {
     }
     return target;
   }
+}
+
+// Records written before Gemini support carry no provider; they are OpenAI.
+function refForRecord(record: JobRecord, requested?: Provider): JobRef {
+  const provider = record.provider ?? "openai";
+  if (requested && requested !== provider) {
+    throw new Error(`Job ${record.jobId} (${record.responseId}) is a ${provider} job, not ${requested}.`);
+  }
+  return { provider, responseId: record.responseId, record };
 }
 
 export function updateJobFromResponse(job: JobRecord, response: ResponseLike): JobRecord {

@@ -11,12 +11,13 @@ import {
   DEFAULT_POLL_INTERVAL,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_TIMEOUT,
+  GEMINI_CONTEXT_WINDOW_TOKENS,
   MODEL_CONTEXT_WINDOW_TOKENS
 } from "./defaults.js";
 import { defaultExpertHome, JobStore } from "./jobs.js";
-import { OpenAISdkAdapter } from "./openai-adapter.js";
-import { REASONING_EFFORTS, REASONING_MODES } from "./types.js";
-import type { OutputFormat, ReasoningEffort, ReasoningMode } from "./types.js";
+import { createBackends } from "./backends.js";
+import { PROVIDERS, REASONING_EFFORTS, REASONING_MODES } from "./types.js";
+import type { OutputFormat, Provider, ReasoningEffort, ReasoningMode } from "./types.js";
 
 function collect(value: string, previous: string[]): string[] {
   previous.push(value);
@@ -28,7 +29,7 @@ export function createProgram(): Command {
 
   program
     .name("expert")
-    .description(`Consult ${DEFAULT_MODEL_DISPLAY_NAME} with explicit local context and resumable background polling.`)
+    .description(`Consult ${DEFAULT_MODEL_DISPLAY_NAME} (or a Gemini model) with explicit local context and resumable background polling.`)
     .version(packageVersion());
 
   program
@@ -39,9 +40,11 @@ export function createProgram(): Command {
     .option("-d, --dir <path>", "Attach files under a directory. Repeatable.", collect, [])
     .option("--exclude <glob>", "Exclude files matching a glob. Repeatable.", collect, [])
     .option("--stdin", "Read additional prompt/context from stdin.")
-    .option("--dry-run", "Show resolved context without calling OpenAI.")
-    .option("--model <model>", "Model to use.", DEFAULT_MODEL)
-    .addOption(new Option("--reasoning <effort>", "Reasoning effort.").choices(REASONING_EFFORTS).default(DEFAULT_REASONING_EFFORT))
+    .option("--dry-run", "Show resolved context without calling any API.")
+    .option("--model <model>", "Model to use. gemini-* models go to the Gemini API with EXPERT_GEMINI_API_KEY.", DEFAULT_MODEL)
+    .addOption(
+      new Option("--reasoning <effort>", `Reasoning effort (default: ${DEFAULT_REASONING_EFFORT}; high for Gemini, which has no max).`).choices(REASONING_EFFORTS)
+    )
     .addOption(new Option("--reasoning-mode <mode>", "Reasoning execution mode (default: pro for GPT-6 Astra and GPT-5.6 models, standard otherwise).").choices(REASONING_MODES))
     .option("--timeout <duration>", "Maximum time to block while polling.", DEFAULT_TIMEOUT)
     .option("--poll-interval <duration>", "Polling interval.", DEFAULT_POLL_INTERVAL)
@@ -50,7 +53,7 @@ export function createProgram(): Command {
     .option("--max-output-tokens <n>", "Maximum output tokens.", parseInteger)
     .option(
       "--max-context-tokens <n>",
-      `Refuse to send when estimated input tokens exceed this (model window: ${MODEL_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US")}).`,
+      `Refuse to send when estimated input tokens exceed this (model window: ${MODEL_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US")}; Gemini ${GEMINI_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US")}).`,
       parseInteger,
       DEFAULT_MAX_CONTEXT_TOKENS
     )
@@ -59,7 +62,7 @@ export function createProgram(): Command {
       await runWithDeps((deps) =>
         runAsk(prompt, {
           ...opts,
-          reasoning: opts.reasoning as ReasoningEffort,
+          reasoning: opts.reasoning as ReasoningEffort | undefined,
           reasoningMode: opts.reasoningMode as ReasoningMode,
           format: opts.format as OutputFormat
         }, deps)
@@ -75,9 +78,10 @@ export function createProgram(): Command {
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]))
     .option("-o, --output <path>", "Write final answer to a file.")
     .option("--cancel-on-interrupt", "Cancel the background response on Ctrl-C.")
+    .addOption(new Option("--provider <provider>", "Provider of a raw id with no saved job record.").choices(PROVIDERS))
     .action(async (id: string, opts) => {
       await runWithDeps((deps) =>
-        runResume(id, { ...opts, format: opts.format as OutputFormat | undefined }, deps)
+        runResume(id, { ...opts, format: opts.format as OutputFormat | undefined, provider: opts.provider as Provider | undefined }, deps)
       );
     });
 
@@ -86,17 +90,19 @@ export function createProgram(): Command {
     .description("Retrieve current status for a saved job id or raw response id.")
     .argument("<jobIdOrResponseId>")
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))
+    .addOption(new Option("--provider <provider>", "Provider of a raw id with no saved job record.").choices(PROVIDERS))
     .action(async (id: string, opts) => {
-      await runWithDeps((deps) => runStatus(id, { format: opts.format as OutputFormat }, deps));
+      await runWithDeps((deps) => runStatus(id, { format: opts.format as OutputFormat, provider: opts.provider as Provider | undefined }, deps));
     });
 
   program
     .command("cancel")
-    .description("Cancel a background response for a saved job id or raw response id.")
+    .description("Cancel a background response or interaction for a saved job id or raw response id.")
     .argument("<jobIdOrResponseId>")
     .addOption(new Option("--format <format>", "Output format.").choices(["text", "json"]).default("text"))
+    .addOption(new Option("--provider <provider>", "Provider of a raw id with no saved job record.").choices(PROVIDERS))
     .action(async (id: string, opts) => {
-      await runWithDeps((deps) => runCancel(id, { format: opts.format as OutputFormat }, deps));
+      await runWithDeps((deps) => runCancel(id, { format: opts.format as OutputFormat, provider: opts.provider as Provider | undefined }, deps));
     });
 
   return program;
@@ -113,7 +119,7 @@ async function runWithDeps(action: (deps: ReturnType<typeof createDeps>) => Prom
 
 function createDeps() {
   return {
-    api: new OpenAISdkAdapter(),
+    backends: createBackends(),
     jobStore: new JobStore(defaultExpertHome()),
     cwd: process.cwd(),
     stdout: process.stdout,

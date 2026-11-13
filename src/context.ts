@@ -78,8 +78,13 @@ const TEXT_EXTENSIONS = new Set([
   ".xlsx"
 ]);
 
+// Container formats the OpenAI Files API reads natively but that are not text.
+const DOCUMENT_EXTENSIONS = new Set([".doc", ".docx", ".odt", ".ppt", ".pptx", ".pdf", ".xls", ".xlsx"]);
+
 export interface ResolveContextOptions {
   cwd: string;
+  // Skip document formats, for providers that receive files inline as text.
+  textOnly?: boolean;
   files?: string[];
   dirs?: string[];
   excludes?: string[];
@@ -144,6 +149,10 @@ export async function resolveContext(options: ResolveContextOptions): Promise<Co
     }
     if (looksBinaryByExtension(absolutePath)) {
       skipped.push({ path: relativePath, reason: "unsupported binary file" });
+      continue;
+    }
+    if (options.textOnly && DOCUMENT_EXTENSIONS.has(path.extname(absolutePath).toLowerCase())) {
+      skipped.push({ path: relativePath, reason: "document format; this model receives text files only" });
       continue;
     }
 

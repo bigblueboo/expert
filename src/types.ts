@@ -8,6 +8,9 @@ export type ReasoningMode = (typeof REASONING_MODES)[number];
 
 export type OutputFormat = "text" | "json";
 
+export const PROVIDERS = ["openai", "gemini"] as const;
+export type Provider = (typeof PROVIDERS)[number];
+
 export const RESPONSE_STATUSES = [
   "queued",
   "in_progress",
@@ -45,6 +48,9 @@ export interface OpenAIAdapter {
   cancelResponse(id: string): Promise<ResponseLike>;
 }
 
+// What polling, status, and cancel need from either provider.
+export type ResponseSource = Pick<OpenAIAdapter, "retrieveResponse" | "cancelResponse">;
+
 export interface ContextFile {
   absolutePath: string;
   relativePath: string;
@@ -69,6 +75,8 @@ export interface JobRecord {
   schemaVersion?: number;
   jobId: string;
   responseId: string;
+  // Absent on records written before Gemini support: those are all OpenAI.
+  provider?: Provider;
   model: string;
   reasoningEffort: ReasoningEffort;
   reasoningMode?: ReasoningMode;
@@ -85,6 +93,7 @@ export interface JobRecord {
 }
 
 export interface JobRef {
+  provider: Provider;
   responseId: string;
   record?: JobRecord;
 }

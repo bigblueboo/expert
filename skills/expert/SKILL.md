@@ -44,6 +44,12 @@ Pro is `reasoning.mode`, independent of `reasoning.effort`; use the model ID `gp
 
 Verified against the official [Astra model page](https://developers.openai.com/api/docs/models/gpt-6-astra), [migration guide](https://developers.openai.com/api/docs/guides/latest-model), and [reasoning mode documentation](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode) on 2026-09-04. If the API reports that Astra is unavailable to the account, report that error; preserve the requested model unless the user chooses an alternative.
 
+### Gemini
+
+When the user asks for Gemini, pass `--model gemini-4-carbon` (CLI 0.3.0 or later). Any `gemini-*` model goes to Google's Gemini Interactions API as a background job, with the same polling, job records, `resume`, `status`, and `cancel`. It needs `EXPERT_GEMINI_API_KEY`; the CLI never reads `GEMINI_API_KEY`. Attached files go inline as text instead of being uploaded, and document formats (PDF, Office) are skipped with a reason. If the job record could not be saved, `resume`, `status`, and `cancel` take the raw interaction id with `--provider gemini`.
+
+Gemini 4 Carbon has a 1,048,576-token window and accepts `low`, `medium`, and `high` reasoning; the CLI defaults Gemini models to `high`. It refuses `--reasoning max` and `--reasoning-mode pro`, which are OpenAI-only. Check `provider: "gemini"` in a `--dry-run --format json` before sending. Checked against Google's [Interactions API reference](https://aistudio.google.com/api-reference/interactions-api) and [thinking docs](https://aistudio.google.com/docs/thinking) on 2026-11-12.
+
 ## Consultation Workflow
 
 1. Decide whether an external consult is appropriate.

@@ -3,10 +3,13 @@
 # resolve the context files, build the charter+diff prompt, budget-check the
 # finished request with a dry run, then hand it to one engine:
 #
-#   expert  GPT-6 Astra in Pro mode over the API; diff inlined, context uploaded.
+#   expert  GPT-6 Astra in Pro mode over the OpenAI API; diff inlined, context uploaded.
+#   gemini  Gemini 4 Carbon over the Gemini API; diff and context inlined.
 #   codex   The local codex CLI, read-only in this repo under its own login.
 #   claude  The local claude CLI (Claude Fable), read-only in this repo under its
 #           own login.
+#
+# A comma-separated --engine list runs one review per engine in parallel.
 #
 # The agent engines (codex, claude) get the diff as a file path and the context
 # as a manifest of paths, and read them with their own tools.
@@ -18,12 +21,16 @@ set -euo pipefail
 usage() {
   cat >&2 <<'USAGE'
 Usage: run-review.sh [options]
-  --engine <name>     expert (default): GPT-6 Astra Pro via the API.
+  --engine <name>     expert (default): GPT-6 Astra Pro via the OpenAI API.
+                      gemini: Gemini 4 Carbon via the Gemini API (EXPERT_GEMINI_API_KEY).
                       codex: the local codex CLI, read-only, its own login.
                       claude: the local claude CLI (Claude Fable), read-only, its own login.
+                      A comma-separated list (claude,gemini,codex) runs those reviews
+                      in parallel; see --output-dir.
   --model <m>         Override the engine's model (expert/codex: gpt-6-astra,
-                      claude: claude-fable-5-2).
-  --effort <e>        Override the reasoning effort (default xhigh on every engine).
+                      gemini: gemini-4-carbon, claude: claude-fable-5-2). One engine only.
+  --effort <e>        Override the reasoning effort (default xhigh; high for gemini,
+                      whose models top out there).
   --base <ref>        Base to diff against (default: merge-base with the default branch).
   --attach <path>     Extra context file/glob/dir. Repeatable. Changed files are always
                       included; use this for tests, importers, canonical utilities,
@@ -32,7 +39,9 @@ Usage: run-review.sh [options]
                       and to the diff. Repeatable.
   --note <path>       File appended to the prompt as clearly-labeled prior-round context
                       (for the one INSUFFICIENT CONTEXT retry).
-  --output <path>     Also write the raw review to this file.
+  --output <path>     Also write the raw review to this file. One engine only.
+  --output-dir <dir>  Several engines: write each review to <dir>/<engine>.md, with its
+                      stderr in <engine>.log (default: a new temp directory).
   --dry-run           Print the context report, then stop before anything is sent.
   --yes               expert only: proceed past the 272k long-context surcharge.
   -h, --help          Show this help.
@@ -42,27 +51,32 @@ USAGE
 
 engine="expert"
 model=""
-effort="xhigh"
+effort=""
 base_ref=""
 attachments=()
 excludes=("**/dist/**" "**/build/**" "**/coverage/**" "**/node_modules/**")
 note_file=""
 output_path=""
+output_dir=""
 dry_run=0
 accept_surcharge=0
+# Everything but --engine and the output flags, for the per-engine runs of a
+# parallel review.
+shared_args=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --engine) engine="${2:?--engine needs expert, codex, or claude}"; shift 2 ;;
+    --engine) engine="${2:?--engine needs expert, gemini, codex, or claude}"; shift 2 ;;
     --model|--codex-model) model="${2:?$1 needs a model}"; shift 2 ;;
-    --effort|--codex-effort) effort="${2:?$1 needs an effort}"; shift 2 ;;
-    --base) base_ref="${2:?--base needs a ref}"; shift 2 ;;
-    --attach) attachments+=("${2:?--attach needs a path}"); shift 2 ;;
-    --exclude) excludes+=("${2:?--exclude needs a glob}"); shift 2 ;;
-    --note) note_file="${2:?--note needs a path}"; shift 2 ;;
+    --effort|--codex-effort) effort="${2:?$1 needs an effort}"; shared_args+=(--effort "$2"); shift 2 ;;
+    --base) base_ref="${2:?--base needs a ref}"; shared_args+=("$1" "$2"); shift 2 ;;
+    --attach) attachments+=("${2:?--attach needs a path}"); shared_args+=("$1" "$2"); shift 2 ;;
+    --exclude) excludes+=("${2:?--exclude needs a glob}"); shared_args+=("$1" "$2"); shift 2 ;;
+    --note) note_file="${2:?--note needs a path}"; shared_args+=("$1" "$2"); shift 2 ;;
     --output) output_path="${2:?--output needs a path}"; shift 2 ;;
-    --dry-run) dry_run=1; shift ;;
-    --yes) accept_surcharge=1; shift ;;
+    --output-dir) output_dir="${2:?--output-dir needs a directory}"; shift 2 ;;
+    --dry-run) dry_run=1; shared_args+=("$1"); shift ;;
+    --yes) accept_surcharge=1; shared_args+=("$1"); shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage; exit 2 ;;
   esac
@@ -70,10 +84,161 @@ done
 
 fail() { echo "run-review: $*" >&2; exit 1; }
 
+# Everything a run writes besides --output-dir goes under two roots: the temp
+# root (staging and scratch files) and the expert job store, whose records hold
+# the full prompt. Both must sit outside the repository, or one run's files could
+# show up in another run's review as untracked changes.
+#
+# resolve_write_path prints where writes to $1 actually land, resolved the way
+# Node does (path.resolve, then symlinks through the nearest existing ancestor)
+# so a `..` after a missing component or a symlinked directory cannot slip by.
+# It creates nothing. With repository root $2, it prints the path relative to
+# the root and exits 3 when the path is inside it.
+resolve_write_path() {
+  node -e '
+    const fs = require("fs"), path = require("path");
+    let rest = [], p = path.resolve(process.argv[1]);
+    while (!fs.existsSync(p)) { rest.unshift(path.basename(p)); p = path.dirname(p); }
+    const resolved = path.join(fs.realpathSync(p), ...rest);
+    const top = fs.realpathSync(process.argv[2]);
+    const inside = resolved === top || resolved.startsWith(top + path.sep);
+    process.stdout.write(inside ? path.relative(top, resolved) : resolved);
+    process.exitCode = inside ? 3 : 0;
+  ' "$1" "$2"
+}
+check_artifacts_outside_repo() {
+  local top name="$1" target="$2" where
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  where="$(resolve_write_path "$target" "$top")" && return 0
+  [[ $? -eq 3 ]] || fail "could not resolve $name ($target)"
+  fail "$name ($target) is inside the repository${where:+ at $where}; point it outside"
+}
+# mktemp resolves TMPDIR the way the filesystem does (symlinks before `..`), so
+# resolve it physically once, check that, and hand the same path to every
+# mktemp here and in the child runs.
+TMPDIR="$(cd -P "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || fail "TMPDIR ${TMPDIR:-/tmp} is not a directory"
+export TMPDIR
+check_artifacts_outside_repo TMPDIR "$TMPDIR"
+# The job store writes to $EXPERT_HOME/jobs, resolved with Node's path.resolve
+# (src/jobs.ts), so check that directory under the same rules.
+check_artifacts_outside_repo EXPERT_HOME "${EXPERT_HOME:-${HOME:?}/.expert}/jobs"
+
+# Several engines: run this script once per engine, all at once, each writing
+# its review and log to a staging directory outside the repository, so no run
+# picks up another's output as an untracked change. The staging directory is
+# never deleted: an API job that timed out saved its path as the place `expert
+# resume` writes the answer. Once every process of every run has exited, print
+# the reviews and copy them to --output-dir, which must be new or empty so one
+# batch never mixes with another; a dry run publishes nothing. An --output-dir
+# inside the repository is excluded from the review. Each run pins its own diff
+# as it starts, so the working tree must stay put until the script finishes.
+run_parallel() {
+  local engines=() e seen=" "
+  IFS=, read -r -a engines <<<"$engine"
+  for e in "${engines[@]}"; do
+    case "$e" in expert|gemini|codex|claude) ;; *) fail "--engine: unknown engine '$e' (expert, gemini, codex, claude)" ;; esac
+    [[ "$seen" != *" $e "* ]] || fail "--engine lists $e twice"
+    seen+="$e "
+  done
+  [[ -z "$model" ]] || fail "--model sets one engine's model; drop it to run several engines"
+  [[ -z "$output_path" ]] || fail "with several engines, pass --output-dir instead of --output"
+  # Checked on dry runs too, so a dry run reports what the real run would do.
+  if [[ -n "$output_dir" ]]; then
+    [[ ! -e "$output_dir" || ( -d "$output_dir" && -z "$(ls -A "$output_dir")" ) ]] \
+      || fail "--output-dir $output_dir already holds files; pass a new or empty directory"
+    # Keep this batch's results, and any earlier ones, out of every run's review.
+    local top rel
+    if top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      if rel="$(resolve_write_path "$output_dir" "$top")"; then
+        :
+      else
+        [[ $? -eq 3 ]] || fail "could not resolve --output-dir $output_dir"
+        shared_args+=(--exclude "$rel/**")
+      fi
+    fi
+  fi
+  local dir self pids=() failed=() i status interrupted=""
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/thermo-reviews.XXXXXX")"
+  self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  # Installed before any run starts, so a signal during the launch still
+  # reaches every run already started, and no further run starts after it.
+  stop_runs() {
+    interrupted="$1"
+    local p
+    for p in ${pids[@]+"${pids[@]}"}; do kill -"$1" -- "-$p" 2>/dev/null || true; done
+  }
+  trap 'stop_runs INT' INT
+  trap 'stop_runs TERM' TERM
+  # Job control puts each run in its own process group, so a signal can reach
+  # the reviewer processes under it and not just its wrapper shell.
+  set -m
+  for e in "${engines[@]}"; do
+    [[ -z "$interrupted" ]] || break
+    bash "$self" --engine "$e" ${shared_args[@]+"${shared_args[@]}"} --output "$dir/$e.md" \
+      >"$dir/$e.out" 2>"$dir/$e.log" &
+    pids+=("$!")
+  done
+  set +m
+  echo "run-review: started ${engines[*]} in parallel; leave the working tree alone until they finish" >&2
+  for i in "${!pids[@]}"; do
+    # A trapped signal interrupts wait, so wait again until the run has exited.
+    status=0
+    wait "${pids[$i]}" || status=$?
+    while kill -0 "${pids[$i]}" 2>/dev/null; do
+      status=0
+      wait "${pids[$i]}" || status=$?
+    done
+    # The wrapper can exit on TERM while its reviewer is still shutting down;
+    # the run is over only when its whole process group is gone.
+    while kill -0 -- "-${pids[$i]}" 2>/dev/null; do sleep 0.2; done
+    [[ "$status" -eq 0 ]] || failed+=("${engines[$i]}")
+  done
+  trap - INT TERM
+  for i in "${!pids[@]}"; do
+    e="${engines[$i]}"
+    echo "===== $e: $dir/$e.log =====" >&2
+    cat "$dir/$e.log" >&2
+    echo "===== $e review ====="
+    cat "$dir/$e.out"
+    echo
+  done
+  if [[ -n "$interrupted" ]]; then
+    echo "run-review: interrupted ($interrupted); every run has stopped. Partial output is in $dir; API jobs print their resume commands in their logs" >&2
+    exit 130
+  fi
+  if [[ "$dry_run" -eq 1 ]]; then
+    rm -rf "$dir"
+    [[ ${#failed[@]} -eq 0 ]] || fail "dry run failed for: ${failed[*]}"
+    echo "run-review: dry run of ${engines[*]} finished; nothing was sent or published" >&2
+    return 0
+  fi
+  if [[ -n "$output_dir" ]]; then
+    # Each run's review (<engine>.md) and log; the .out files repeat the review.
+    local published=()
+    for e in "${engines[@]}"; do
+      for f in "$dir/$e.md" "$dir/$e.log"; do [[ -e "$f" ]] && published+=("$f"); done
+    done
+    { mkdir -p "$output_dir" && cp ${published[@]+"${published[@]}"} "$output_dir"/; } \
+      || fail "could not copy the reviews to $output_dir; they are in $dir"
+  fi
+  if [[ ${#failed[@]} -gt 0 ]]; then
+    fail "failed: ${failed[*]}; see their logs in ${output_dir:-$dir}. An API job resumed with \`expert resume\` writes its review to $dir/<engine>.md"
+  fi
+  echo "run-review: all ${#engines[@]} finished; reviews in ${output_dir:-$dir}" >&2
+}
+
+if [[ "$engine" == *,* ]]; then
+  run_parallel
+  exit 0
+fi
+[[ -z "$output_dir" ]] || fail "--output-dir is for several engines; with one, use --output"
+
 # Everything engine-specific is decided here, once: first the per-engine facts,
 # then what each kind of engine (api or agent) is told.
 case "$engine" in
-  expert) engine_kind=api;   model="${model:-gpt-6-astra}" ;;
+  expert) engine_kind=api;   model="${model:-gpt-6-astra}"; api_mode=pro ;;
+  gemini) engine_kind=api;   model="${model:-gemini-4-carbon}"; api_mode=standard
+          effort="${effort:-high}" ;;
   codex)  engine_kind=agent; model="${model:-gpt-6-astra}"
           agent_tools="You can read any file and run read-only commands such as grep, git log, and git show."
           # Codex holds gpt-6-astra to 272k although the API serves 1.05M; with
@@ -100,8 +265,9 @@ case "$engine" in
           codex_fit_tokens=$((codex_window * 4 / 5)) ;;
   claude) engine_kind=agent; model="${model:-claude-fable-5-2}"
           agent_tools="Your tools are Read, Grep, and Glob." ;;
-  *) fail "--engine must be expert, codex, or claude, not $engine" ;;
+  *) fail "--engine must be expert, gemini, codex, or claude (or a comma-separated list), not $engine" ;;
 esac
+effort="${effort:-xhigh}"
 engine_label="$engine ($model, $effort)"
 
 case "$engine_kind" in
@@ -113,7 +279,7 @@ sources the requesting agent selected for structural context.
 NOTE
 )"
     instruction="Perform the thermo-nuclear code quality review defined by the charter at the start of stdin. The diff under review is delimited in stdin; the attached files are full current sources for structural context. Follow the charter's Output Contract exactly."
-    model_args=(--model "$model" --reasoning-mode pro --reasoning "$effort")
+    model_args=(--model "$model" --reasoning-mode "$api_mode" --reasoning "$effort")
     ;;
   agent)
     access_note="$(cat <<'NOTE'
@@ -210,6 +376,10 @@ count_lines() { wc -l <"$1" | tr -d ' '; }
 
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/thermo-review.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
+# Exiting from the signal handlers runs the EXIT trap, so a stopped run leaves
+# no copy of the diff and prompt behind.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 prompt_file="$work_dir/prompt.txt"
 diff_file="$work_dir/review.diff"
 
@@ -327,6 +497,11 @@ api_finalize() {
   } >>"$prompt_file"
   report="$(dry_run_request "$prompt_file")"
   estimated_tokens="$(estimate_of "$report")"
+  # An expert CLI from before Gemini support would send a gemini-* model to OpenAI.
+  if [[ "$engine" == gemini ]]; then
+    node -e "$read_dry_run"'process.exit(d.provider === "gemini" ? 0 : 1)' <<<"$report" \
+      || fail "the expert CLI (${expert_cmd[*]}) predates Gemini support; update it to 0.3.0 or later"
+  fi
 }
 
 agent_finalize() {
@@ -370,6 +545,8 @@ codex_check() {
   fi
 }
 
+gemini_check() { :; }
+
 claude_check() {
   command -v claude >/dev/null 2>&1 || fail "claude not found on PATH; install Claude Code and log in"
   claude auth status >/dev/null 2>&1 || fail "claude is not logged in; run claude auth login"
@@ -382,16 +559,39 @@ if [[ "$dry_run" -eq 1 ]]; then
   exit 0
 fi
 
+# API keys the reviewers could read. Each reviewer keeps only the one it needs:
+# an agent can run commands that print its environment.
+provider_keys=(EXPERT_OPENAI_API_KEY OPENAI_API_KEY EXPERT_GEMINI_API_KEY GEMINI_API_KEY GOOGLE_API_KEY)
+# The agents get none of the API keys, except that Codex keeps OPENAI_API_KEY,
+# which is one of its own ways to sign in.
+agent_env=(env)
+for k in "${provider_keys[@]}"; do agent_env+=(-u "$k"); done
+codex_env=(env)
+for k in "${provider_keys[@]}"; do [[ "$k" == OPENAI_API_KEY ]] || codex_env+=(-u "$k"); done
+
+# -o goes into the job record, so `expert resume` still writes the review there.
+# Runs `expert ask` with every provider key unset except the ones named.
+api_ask() {
+  local keep=" $* " k output_args=()
+  [[ -n "$output_path" ]] && output_args=(-o "$output_path")
+  (
+    for k in "${provider_keys[@]}"; do [[ "$keep" == *" $k "* ]] || unset "$k"; done
+    "${expert_cmd[@]}" ask "$instruction" --stdin \
+      "${model_args[@]}" "${file_args[@]}" ${output_args[@]+"${output_args[@]}"} <"$prompt_file"
+  )
+}
+
 expert_consult() {
   [[ -n "${EXPERT_OPENAI_API_KEY:-}" ]] || fail "EXPERT_OPENAI_API_KEY is not set"
-  # -o goes into the job record, so `expert resume` still writes the review there.
-  local output_args=()
-  [[ -n "$output_path" ]] && output_args=(-o "$output_path")
   # expert >= 0.2.0 reads EXPERT_OPENAI_API_KEY; older CLIs on PATH or in the npx
-  # cache read OPENAI_API_KEY. Override that name with the expert key for this
-  # call, so whichever CLI resolves uses the expert key and never a general one.
-  OPENAI_API_KEY="$EXPERT_OPENAI_API_KEY" "${expert_cmd[@]}" ask "$instruction" --stdin \
-    "${model_args[@]}" "${file_args[@]}" ${output_args[@]+"${output_args[@]}"} <"$prompt_file"
+  # cache read OPENAI_API_KEY. Hand the expert key over under both names, so
+  # whichever CLI resolves uses the expert key and never a general one.
+  ( export OPENAI_API_KEY="$EXPERT_OPENAI_API_KEY"; api_ask EXPERT_OPENAI_API_KEY OPENAI_API_KEY )
+}
+
+gemini_consult() {
+  [[ -n "${EXPERT_GEMINI_API_KEY:-}" ]] || fail "EXPERT_GEMINI_API_KEY is not set"
+  api_ask EXPERT_GEMINI_API_KEY
 }
 
 # The agents print the review on stdout; copy it to --output as well.
@@ -417,7 +617,7 @@ codex_consult() {
     skill_mcp_dependency_install tool_suggest workspace_dependencies goals; do
     lockdown+=(--disable "$feature")
   done
-  deliver env -u EXPERT_OPENAI_API_KEY codex exec "${lockdown[@]}" -C "$PWD" \
+  deliver "${codex_env[@]}" codex exec "${lockdown[@]}" -C "$PWD" \
     -m "$model" -c "model_reasoning_effort=\"$effort\"" \
     ${codex_window_args[@]+"${codex_window_args[@]}"} "$instruction" <"$prompt_file"
 }
@@ -432,7 +632,7 @@ claude_consult() {
   for g in "${secret_globs[@]}"; do secret_reads+=("Read(**/$g)"); done
   # The prompt goes first: --tools, --disallowedTools, and --add-dir each take
   # every following argument up to the next flag.
-  deliver env -u EXPERT_OPENAI_API_KEY -u CLAUDECODE claude -p "$instruction" \
+  deliver "${agent_env[@]}" -u CLAUDECODE claude -p "$instruction" \
     --model "$model" --effort "$effort" \
     --tools Read,Grep,Glob --permission-mode dontAsk \
     --strict-mcp-config --setting-sources "" --no-session-persistence \

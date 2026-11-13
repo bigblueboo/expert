@@ -1,6 +1,6 @@
 ---
 name: thermo-nuclear-expert-review
-description: Run a thermo-nuclear code quality review with the heaviest reviewer available - GPT-6 Astra in Pro mode over the API, GPT-6 Astra through the local `codex` CLI, or Claude Fable through the local `claude` CLI, the last two read-only in the repo under their own logins. An extremely strict structural maintainability audit of a branch or diff, with as much of the repository in view as the token budget allows. Use when asked for a thermo-nuclear review, a thermonuclear review, an expert deep code quality audit, or an especially harsh external review of maintainability, abstraction quality, and spaghetti growth.
+description: Run a thermo-nuclear code quality review with the heaviest reviewers available - GPT-6 Astra in Pro mode over the OpenAI API, Gemini 4 Carbon over the Gemini API, GPT-6 Astra through the local `codex` CLI, or Claude Fable through the local `claude` CLI (the last two read-only in the repo under their own logins), one at a time or several in parallel. An extremely strict structural maintainability audit of a branch or diff, with as much of the repository in view as the token budget allows. Use when asked for a thermo-nuclear review, a thermonuclear review, an expert deep code quality audit, or an especially harsh external review of maintainability, abstraction quality, and spaghetti growth.
 disable-model-invocation: true
 ---
 
@@ -26,18 +26,21 @@ Pick the reviewer the user names; they will usually say a model, not an engine.
 | Reviewer | Command | Runs through | Login |
 |---|---|---|---|
 | GPT-6 Astra Pro | `--engine expert` (default) | OpenAI API, Pro reasoning mode | `EXPERT_OPENAI_API_KEY` |
+| Gemini 4 Carbon | `--engine gemini` | Gemini API (Interactions, background mode) | `EXPERT_GEMINI_API_KEY` |
 | GPT-6 Astra | `--engine codex` | local `codex` CLI, read-only sandbox | Codex's own (ChatGPT plan or API key) |
 | GPT-6.2 Sol (or any Codex model) | `--engine codex --model gpt-6.2-sol` | same | same |
 | Claude Fable 5.2 | `--engine claude` | local `claude` CLI, read-only tools | Claude Code's own (Claude plan or API key) |
 
 With no preference stated, use `expert` when `EXPERT_OPENAI_API_KEY` is set, and
-otherwise `codex` or `claude`, whichever is installed and logged in. Every engine
-defaults to `xhigh` effort; pass `--effort max` for a heavier pass, or `--model` to
-pick another model the engine supports (`--codex-model` and `--codex-effort` still
-work as aliases).
+otherwise `codex` or `claude`, whichever is installed and logged in. Engines default
+to `xhigh` effort, except `gemini`, which defaults to `high` because Carbon has no
+higher thinking level. Pass `--effort max` for a heavier pass on the others, or
+`--model` to pick another model the engine supports (`--codex-model` and
+`--codex-effort` still work as aliases).
 
-- **`expert`** sees exactly what the script sends: the diff inline and the context
-  files uploaded. Billed per token to the key's account.
+- **`expert`** and **`gemini`** see exactly what the script sends: the diff inline
+  and the context files attached (uploaded to OpenAI; inlined as text for Gemini).
+  Billed per token to the key's account.
 - **`codex`** and **`claude`** are agents running inside the repository. They get
   the diff as a file path and the context as a JSON manifest of paths, must read
   all of it in full, and may read further on their own. Codex can also run
@@ -65,11 +68,15 @@ work as aliases).
   anything not pre-approved is denied, with no settings files (neither the user's
   hooks nor the repo's `.claude/`) and no MCP servers. Reads of the secret files
   below are denied outright.
-- `EXPERT_OPENAI_API_KEY` is removed from both agents' environments.
+- `gemini` needs `EXPERT_GEMINI_API_KEY` and an `expert` CLI of 0.3.0 or later; the
+  script stops if either is missing and never reads `GEMINI_API_KEY`. Carbon takes
+  `low`, `medium`, or `high` effort.
+- `EXPERT_OPENAI_API_KEY` is removed from both agents' environments, and both
+  OpenAI keys from the `gemini` consult's.
 - Any consult spends real tokens or plan quota and can block for hours (the
   `expert` default timeout is 6h). That is expected for this review.
 - Every engine sends code to its provider: OpenAI for `expert` and `codex`,
-  Anthropic for `claude`. The script treats `.env`, `.env.*`, `*.pem`, `*.key`,
+  Google for `gemini`, Anthropic for `claude`. The script treats `.env`, `.env.*`, `*.pem`, `*.key`,
   `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `.npmrc`, and `.netrc` as secrets
   for every engine. Any changed file the context resolver would not attach (an
   `--exclude` match, a secret, a binary, a symlink, an oversized file) is withheld from the diff and the
@@ -79,8 +86,8 @@ work as aliases).
   whatever they read; Codex is told never to open secrets but nothing enforces it,
   so do not use `codex` in a tree where a secret on disk must never leave the
   machine. Do not run any engine when the user forbids external API calls. If
-  `OPENAI_BASE_URL` is set to something unexpected, stop and ask — it redirects the
-  expert key and all uploads.
+  `OPENAI_BASE_URL` or `EXPERT_GEMINI_BASE_URL` is set to something unexpected, stop
+  and ask: each redirects its provider's key and everything sent with it.
 
 ## Step 1 — Pin the scope
 
@@ -149,7 +156,36 @@ cases.
   --output review.md
 ```
 
-Add `--engine codex` or `--engine claude` to run the same review through an agent.
+Add `--engine codex` or `--engine claude` to run the same review through an agent,
+or `--engine gemini` for Gemini 4 Carbon.
+
+### Several reviewers at once
+
+When the user asks for more than one reviewer, list the engines with commas and
+they run in parallel, each on its own pin of the same working tree:
+
+```sh
+"$SKILL_DIR"/scripts/run-review.sh --engine claude,gemini,codex \
+  --attach "src/**/*.ts" --attach package.json --output-dir reviews/
+```
+
+Each review lands in `<dir>/<engine>.md` with the engine's stderr in
+`<engine>.log`; without `--output-dir` they stay in a temp directory whose path
+the script prints. The runs write to a staging directory outside the repository,
+and the script copies the files to `--output-dir` once every reviewer process has
+exited, so the reviews never review each other. `--output-dir` must be new or
+empty, and when it sits inside the repository the script leaves it out of the
+review. A dry run never writes to it. The script also refuses to start when
+`TMPDIR` or `EXPERT_HOME` points inside the repository, since its scratch files and
+job records would otherwise end up under review. The staging directory stays: if an `expert`
+or `gemini` job times out, `expert resume` writes its answer there. Ctrl-C stops
+every run and exits 130. Every review prints on stdout once all of them finish. `--model` and
+`--output` apply to one engine, so the script rejects them here; `--effort` goes to
+every engine, so leave it off when `gemini` is in the list. Dry-run the list first,
+since every engine runs its own budget check. If one engine fails, the others still
+deliver, and the script exits 1 naming the failures. Each engine pins its own
+copy of the diff as it starts, so don't change the working tree until the script
+finishes.
 
 The script aborts before spending anything if the charter, diff, or budget check
 fails. If an `expert` consult is interrupted, run the `expert resume <job_id>`
@@ -182,6 +218,18 @@ The review is expert input, not automatic truth. Before relaying or acting on it
 - Keep the charter's priority order and the `BLOCKER` / `RECOMMENDED` marks, and
   relay the reviewer's scope-and-gaps section with the verdict.
 - Only start implementing remedies if the user asked for fixes, not just the review.
+
+With several reviewers, verify each review on its own as above, then deliver one
+combined report:
+
+- Group findings that name the same defect, and list which reviewers raised each
+  one. A finding several reviewers raised independently is stronger evidence, but
+  it still has to pass verification.
+- A finding only one reviewer raised gets the same verification as any other,
+  neither more nor less.
+- Give each reviewer's raw verdict, then one verified verdict computed from the
+  surviving findings of all of them under the charter's rules.
+- Where reviewers contradict each other, check the code and say which one holds.
 
 ---
 

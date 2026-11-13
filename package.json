@@ -1,7 +1,7 @@
 {
   "name": "@bigblueboo/expert",
   "version": "0.3.0",
-  "description": "A blocking GPT-6 Astra consultation CLI for agents, using Pro reasoning mode.",
+  "description": "A blocking second-opinion CLI for agents: GPT-6 Astra in Pro reasoning mode or Gemini 4 Carbon, with resumable background jobs.",
   "license": "MIT",
   "author": "Charles Deck",
   "repository": {
@@ -16,6 +16,8 @@
     "cli",
     "openai",
     "gpt-6-astra",
+    "gemini",
+    "gemini-4-carbon",
     "pro-reasoning",
     "agent",
     "agent-skill",

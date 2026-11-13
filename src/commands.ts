@@ -1,25 +1,16 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { JobRecord, JobRef, OpenAIAdapter, OutputFormat, ReasoningEffort, ReasoningMode, ResponseLike } from "./types.js";
+import type { JobRecord, JobRef, OutputFormat, Provider, ReasoningEffort, ReasoningMode, ResponseLike, ResponseSource } from "./types.js";
+import { providerFor, type Backends } from "./backends.js";
 import { estimateTokens, resolveContext, readStdinIfRequested, stableContextHash } from "./context.js";
-import {
-  DEFAULT_MAX_CONTEXT_TOKENS,
-  DEFAULT_MODEL,
-  DEFAULT_POLL_INTERVAL,
-  DEFAULT_REASONING_EFFORT,
-  DEFAULT_TIMEOUT,
-  MODEL_CONTEXT_WINDOW_TOKENS,
-  PRICING_SURCHARGE_INPUT_TOKENS,
-  defaultReasoningMode
-} from "./defaults.js";
+import { DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_POLL_INTERVAL, DEFAULT_TIMEOUT } from "./defaults.js";
 import { JobStore, updateJobFromResponse } from "./jobs.js";
 import { terminalErrorMessage, extractOutputText, normalizeStatus } from "./output.js";
 import { pollResponse } from "./poller.js";
-import { prepareConsultationRequest } from "./request.js";
 import { formatElapsed, parseDurationMs } from "./time.js";
 
 export interface CommandDeps {
-  api: OpenAIAdapter;
+  backends: Backends;
   jobStore: JobStore;
   cwd: string;
   stdout: NodeJS.WritableStream;
@@ -48,7 +39,12 @@ export interface AskOptions {
 export type ResumeOptions = Pick<
   AskOptions,
   "timeout" | "pollInterval" | "format" | "output" | "cancelOnInterrupt" | "registerSignals"
->;
+> & { provider?: Provider };
+
+export interface JobActionOptions {
+  format?: OutputFormat;
+  provider?: Provider;
+}
 
 interface WaitOptions {
   timeout?: string;
@@ -61,8 +57,9 @@ interface WaitOptions {
 
 export async function runAsk(promptParts: string[], options: AskOptions, deps: CommandDeps): Promise<number> {
   const model = options.model ?? DEFAULT_MODEL;
-  const reasoningEffort = options.reasoning ?? DEFAULT_REASONING_EFFORT;
-  const reasoningMode = options.reasoningMode ?? defaultReasoningMode(model);
+  const provider = providerFor(model);
+  const backend = deps.backends[provider];
+  const { reasoningEffort, reasoningMode } = backend.resolveSettings(model, options.reasoning, options.reasoningMode);
   const format = options.format ?? "text";
   const prompt = promptParts.join(" ").trim();
   const stdinText = await readStdinIfRequested(Boolean(options.stdin));
@@ -75,7 +72,8 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     cwd: deps.cwd,
     files: options.file ?? [],
     dirs: options.dir ?? [],
-    excludes: options.exclude ?? []
+    excludes: options.exclude ?? [],
+    textOnly: backend.textOnlyContext
   });
 
   const maxContextTokens = options.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
@@ -84,12 +82,13 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
   const overCapMessage =
     `Estimated input is ~${estimatedInputTokens.toLocaleString("en-US")} tokens, above the ` +
     `--max-context-tokens cap of ${maxContextTokens.toLocaleString("en-US")} ` +
-    `(the model's context window is ${MODEL_CONTEXT_WINDOW_TOKENS.toLocaleString("en-US")} tokens, shared with reasoning and output). ` +
+    `(the model's context window is ${backend.contextWindowTokens.toLocaleString("en-US")} tokens, shared with reasoning and output). ` +
     `Narrow the attached context; use --dry-run --format json to see per-file estimates.`;
 
   if (options.dryRun) {
     if (format === "json") {
       const payload = {
+        provider,
         model,
         reasoning_effort: reasoningEffort,
         reasoning_mode: reasoningMode,
@@ -122,15 +121,12 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
   if (estimatedInputTokens > maxContextTokens) {
     throw new Error(overCapMessage);
   }
-  if (estimatedInputTokens > PRICING_SURCHARGE_INPUT_TOKENS) {
-    deps.stderr.write(
-      `Warning: estimated input (~${estimatedInputTokens.toLocaleString("en-US")} tokens) exceeds ` +
-      `${PRICING_SURCHARGE_INPUT_TOKENS.toLocaleString("en-US")}; OpenAI bills such requests at 2x input / 1.5x output ` +
-      `for the entire request.\n`
-    );
+  const costWarning = backend.costWarning(estimatedInputTokens);
+  if (costWarning) {
+    deps.stderr.write(`Warning: ${costWarning}\n`);
   }
 
-  const prepared = await prepareConsultationRequest(deps.api, {
+  const created = await backend.start({
     model,
     reasoningEffort,
     reasoningMode,
@@ -139,8 +135,6 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     context,
     maxOutputTokens: options.maxOutputTokens
   });
-
-  const created = await deps.api.createResponse(prepared.body);
   // The response is already running server-side; surface its id before doing
   // anything that can fail, so it is never orphaned without a resume handle.
   deps.stderr.write(`Created response ${created.id}.\n`);
@@ -149,13 +143,14 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
   try {
     record = await deps.jobStore.create({
       responseId: created.id,
+      provider,
       model,
       reasoningEffort,
       reasoningMode,
       status: normalizeStatus(created.status),
-      prompt: prepared.fullPrompt,
+      prompt: created.fullPrompt,
       manifest: context.manifest,
-      uploadedFiles: prepared.uploadedFiles,
+      uploadedFiles: created.uploadedFiles,
       skippedFiles: context.skipped,
       outputPath,
       format
@@ -163,12 +158,12 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
     deps.stderr.write(`Started ${record.jobId} (${record.responseId}).\n`);
   } catch (error) {
     deps.stderr.write(
-      `Warning: could not persist job record (${errorText(error)}). The response is still running; resume with: expert resume ${created.id}\n`
+      `Warning: could not persist job record (${errorText(error)}). The response is still running; resume with: expert resume ${resumeHandle({ provider, responseId: created.id })}\n`
     );
   }
 
   return await waitForJob(
-    { responseId: created.id, record },
+    { provider, responseId: created.id, record },
     {
       timeout: options.timeout,
       pollInterval: options.pollInterval,
@@ -182,7 +177,7 @@ export async function runAsk(promptParts: string[], options: AskOptions, deps: C
 }
 
 export async function runResume(id: string, options: ResumeOptions, deps: CommandDeps): Promise<number> {
-  const ref = await deps.jobStore.load(id);
+  const ref = await deps.jobStore.load(id, options.provider);
   const outputPath = options.output ? path.resolve(deps.cwd, options.output) : ref.record?.outputPath;
   const format = options.format ?? ref.record?.format ?? "text";
   if (ref.record) {
@@ -202,22 +197,22 @@ export async function runResume(id: string, options: ResumeOptions, deps: Comman
   );
 }
 
-export async function runStatus(id: string, options: { format?: OutputFormat }, deps: CommandDeps): Promise<number> {
-  return await runResponseAction(id, options, deps, (api, responseId) => api.retrieveResponse(responseId));
+export async function runStatus(id: string, options: JobActionOptions, deps: CommandDeps): Promise<number> {
+  return await runResponseAction(id, options, deps, (source, responseId) => source.retrieveResponse(responseId));
 }
 
-export async function runCancel(id: string, options: { format?: OutputFormat }, deps: CommandDeps): Promise<number> {
-  return await runResponseAction(id, options, deps, (api, responseId) => api.cancelResponse(responseId));
+export async function runCancel(id: string, options: JobActionOptions, deps: CommandDeps): Promise<number> {
+  return await runResponseAction(id, options, deps, (source, responseId) => source.cancelResponse(responseId));
 }
 
 async function runResponseAction(
   id: string,
-  options: { format?: OutputFormat },
+  options: JobActionOptions,
   deps: CommandDeps,
-  action: (api: OpenAIAdapter, responseId: string) => Promise<ResponseLike>
+  action: (source: ResponseSource, responseId: string) => Promise<ResponseLike>
 ): Promise<number> {
-  const ref = await deps.jobStore.load(id);
-  const response = await action(deps.api, ref.responseId);
+  const ref = await deps.jobStore.load(id, options.provider);
+  const response = await action(sourceFor(ref, deps), ref.responseId);
   await saveUpdatedRecord(ref, response, deps);
 
   const payload = responsePayload(ref, response);
@@ -234,6 +229,7 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
   const timeoutMs = parseDurationMs(options.timeout ?? DEFAULT_TIMEOUT);
   const pollIntervalMs = parseDurationMs(options.pollInterval ?? DEFAULT_POLL_INTERVAL);
   const startedAt = Date.now();
+  const source = sourceFor(ref, deps);
   let interrupted = false;
 
   const onInterrupt = () => {
@@ -245,7 +241,7 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
   }
 
   try {
-    const outcome = await pollResponse(deps.api, ref.responseId, {
+    const outcome = await pollResponse(source, ref.responseId, {
       timeoutMs,
       pollIntervalMs,
       shouldStop: () => interrupted,
@@ -258,14 +254,14 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
     switch (outcome.kind) {
       case "stopped": {
         if (options.cancelOnInterrupt) {
-          const cancelled = await deps.api.cancelResponse(ref.responseId);
+          const cancelled = await source.cancelResponse(ref.responseId);
           await saveUpdatedRecord(ref, cancelled, deps);
           deps.stderr.write(`Cancelled ${displayId(ref)} (${ref.responseId}).\n`);
         } else {
           if (ref.record) {
             await trySaveRecord({ ...ref.record, status: "interrupted" }, deps);
           }
-          deps.stderr.write(`Interrupted. Response is still running; resume with: expert resume ${displayId(ref)}\n`);
+          deps.stderr.write(`Interrupted. Response is still running; resume with: expert resume ${resumeHandle(ref)}\n`);
         }
         return 130;
       }
@@ -293,8 +289,8 @@ async function waitForJob(ref: JobRef, options: WaitOptions, deps: CommandDeps):
         deps.stderr.write(
           `Timed out after ${formatElapsed(timeoutMs)} waiting for ${displayId(ref)} (${ref.responseId}); last status: ${lastStatus}.\n` +
           `The response is still running server-side; nothing was cancelled.\n` +
-          `Resume with: expert resume ${displayId(ref)}\n` +
-          `Allow more time with --timeout, e.g.: expert resume ${displayId(ref)} --timeout 12h\n`
+          `Resume with: expert resume ${resumeHandle(ref)}\n` +
+          `Allow more time with --timeout, e.g.: expert resume ${resumeHandle(ref)} --timeout 12h\n`
         );
         return 124;
       }
@@ -347,6 +343,7 @@ function responsePayload(ref: JobRef, response: ResponseLike, outputText = extra
   return {
     job_id: displayId(ref),
     response_id: ref.responseId,
+    provider: ref.provider,
     model: ref.record?.model ?? "unknown",
     reasoning_effort: ref.record?.reasoningEffort ?? null,
     reasoning_mode: ref.record?.reasoningMode ?? null,
@@ -358,6 +355,15 @@ function responsePayload(ref: JobRef, response: ResponseLike, outputText = extra
     uploaded_files: ref.record?.uploadedFiles ?? [],
     skipped_files: ref.record?.skippedFiles ?? []
   };
+}
+
+function sourceFor(ref: JobRef, deps: CommandDeps): ResponseSource {
+  return deps.backends[ref.provider];
+}
+
+// Without a saved record, a raw Gemini id needs its provider spelled out.
+function resumeHandle(ref: JobRef): string {
+  return ref.record ? displayId(ref) : `${ref.responseId} --provider ${ref.provider}`;
 }
 
 function displayId(ref: JobRef): string {

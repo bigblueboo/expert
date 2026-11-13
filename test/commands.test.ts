@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
+import { createBackends } from "../src/backends.js";
 import { runAsk, runCancel, runResume, runStatus } from "../src/commands.js";
 import { resolveContext } from "../src/context.js";
 import { JobStore } from "../src/jobs.js";
@@ -294,7 +295,7 @@ describe("job commands", () => {
 
 function depsFor(cwd: string, api: OpenAIAdapter) {
   return {
-    api,
+    backends: createBackends({ openai: api }),
     jobStore: new JobStore(path.join(cwd, ".expert")),
     cwd,
     stdout: stream(),

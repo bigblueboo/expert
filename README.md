@@ -4,11 +4,11 @@
 [![npm version](https://img.shields.io/npm/v/%40bigblueboo%2Fexpert)](https://www.npmjs.com/package/@bigblueboo/expert)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-`expert` asks GPT-6 Astra in Pro mode for a second opinion, with real files from your repo attached. You name the files; it uploads them, starts a background job on the OpenAI Responses API, and polls until the answer comes back. Pro consults can take a while — the default timeout is 6 hours (`--timeout` to change it). Every consult gets a local job record, so if your terminal dies mid-wait you can pick the job back up with `expert resume`.
+`expert` asks GPT-6 Astra in Pro mode for a second opinion, with real files from your repo attached. You name the files; it uploads them, starts a background job on the OpenAI Responses API, and polls until the answer comes back. Pro consults can take a while — the default timeout is 6 hours (`--timeout` to change it). Every consult gets a local job record, so if your terminal dies mid-wait you can pick the job back up with `expert resume`. Pass a `gemini-*` model, such as `gemini-4-carbon`, and the same flow runs on Google's Gemini Interactions API instead.
 
-The repo also includes two agent skills. [expert](skills/expert/SKILL.md) teaches Claude Code, Codex, and other coding agents when to reach for the CLI. [thermo-nuclear-expert-review](skills/thermo-nuclear-expert-review/SKILL.md) uses it for an ultra-strict structural code review: the diff, a demanding review charter, and as much of your repo as the token budget allows all go to GPT-6 Astra in Pro mode together. Pass `--engine codex` or `--engine claude` to run the same review through your local Codex (GPT-6 Astra) or Claude Code (Claude Fable) instead, read-only inside the repo and under its existing login. Its standards are adapted from the Cursor team's thermo-nuclear-code-quality-review skill.
+The repo also includes two agent skills. [expert](skills/expert/SKILL.md) teaches Claude Code, Codex, and other coding agents when to reach for the CLI. [thermo-nuclear-expert-review](skills/thermo-nuclear-expert-review/SKILL.md) uses it for an ultra-strict structural code review: the diff, a demanding review charter, and as much of your repo as the token budget allows all go to GPT-6 Astra in Pro mode together. Pass `--engine gemini` to send it to Gemini 4 Carbon, or `--engine codex` or `--engine claude` to run it through your local Codex (GPT-6 Astra) or Claude Code (Claude Fable), read-only inside the repo and under its existing login. A comma-separated list, such as `--engine claude,gemini,codex`, runs several reviewers in parallel. Its standards are adapted from the Cursor team's thermo-nuclear-code-quality-review skill.
 
-If you know [Oracle](https://github.com/steipete/oracle), this covers similar ground. Oracle can drive ChatGPT Pro through a browser session so subscribers don't need an API key; `expert` stays on the API. One engine, fewer moving parts.
+If you know [Oracle](https://github.com/steipete/oracle), this covers similar ground. Oracle can drive ChatGPT Pro through a browser session so subscribers don't need an API key; `expert` stays on the APIs, which means fewer moving parts.
 
 ## Quick start
 
@@ -18,6 +18,15 @@ Requires Node >= 20 and an `EXPERT_OPENAI_API_KEY`. Since 0.2.0 the CLI ignores 
 export EXPERT_OPENAI_API_KEY=...
 npx -y @bigblueboo/expert ask "Review this implementation plan" --file README.md
 ```
+
+For Gemini, set `EXPERT_GEMINI_API_KEY` instead; the CLI never reads `GEMINI_API_KEY`:
+
+```sh
+export EXPERT_GEMINI_API_KEY=...
+npx -y @bigblueboo/expert ask "Review this implementation plan" --file README.md --model gemini-4-carbon
+```
+
+Gemini runs with standard reasoning (Pro mode is OpenAI-only) and defaults to `--reasoning high`, the top level Carbon accepts. It has no `max`.
 
 ## Install
 
@@ -106,6 +115,8 @@ Expect a consult like this to spend real tokens and real time. Attaching half th
 
 GPT-6 Astra has a 1,050,000-token context window shared by input, reasoning, and output (128,000 max output tokens). The CLI estimates input at ~4 characters per token and refuses to send when the estimate exceeds `--max-context-tokens`. The default cap is 900,000; the rest of the window is headroom for reasoning and output. Dry runs report `estimated_input_tokens` (and per-file `estimated_tokens` under `--format json`) instead of failing. Use them to trim an oversized attachment list.
 
+Gemini 4 models have a 1,048,576-token window, also shared with thinking and output; the same 900,000 cap applies.
+
 Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1.5x output for the entire request; the CLI warns before sending one. The ~4-chars-per-token estimate is also unreliable for PDFs and other rich formats. Leave extra headroom when attaching them.
 
 ## Context selection notes
@@ -119,7 +130,9 @@ Requests whose input exceeds 272,000 tokens are billed by OpenAI at 2x input / 1
 
 Attached files are uploaded to the OpenAI Files API with `purpose: "user_data"`, and responses are created with `store: true`. Uploaded files and stored responses stay in your OpenAI account until you delete them there; the CLI only deletes uploads when a later upload in the same batch fails.
 
-`OPENAI_BASE_URL` redirects all traffic — including your API key and uploaded file content — to the given host. It exists for testing against mock servers. Treat it as security-sensitive.
+For Gemini models, attached files go inline in the request as text, with no Files API upload, and interactions are created with `background: true` and `store: true`. Google keeps stored interactions for 55 days on the paid tier (configurable in AI Studio) and 1 day on the free tier. `expert cancel` stops a running interaction; it doesn't delete it.
+
+`OPENAI_BASE_URL` redirects all traffic — including your API key and uploaded file content — to the given host. It exists for testing against mock servers. Treat it as security-sensitive. `EXPERT_GEMINI_BASE_URL` does the same for Gemini traffic.
 
 ## Skill layout
 
